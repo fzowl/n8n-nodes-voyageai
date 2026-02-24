@@ -63,8 +63,23 @@ describe('EmbeddingsVoyageAiMultimodal', () => {
 			expect(embeddingsNode.description.version).toBe(1);
 		});
 
-		it('should have model fixed to voyage-multimodal-3', () => {
-			expect(embeddingsNode.description.properties.find((p) => p.name === 'model')).toBeUndefined();
+		it('should have model parameter with voyage-multimodal-3 as default', () => {
+			const modelParam = embeddingsNode.description.properties.find(
+				(p) => p.name === 'modelName',
+			);
+			expect(modelParam).toBeDefined();
+			expect(modelParam?.type).toBe('options');
+			expect(modelParam?.default).toBe('voyage-multimodal-3');
+		});
+
+		it('should include voyage-multimodal-3.5 model option', () => {
+			const modelParam = embeddingsNode.description.properties.find(
+				(p) => p.name === 'modelName',
+			);
+			const options = (modelParam as any)?.options || [];
+			const modelValues = options.map((o: any) => o.value);
+			expect(modelValues).toContain('voyage-multimodal-3.5');
+			expect(modelValues).toContain('voyage-multimodal-3');
 		});
 
 		it('should have contentType parameter', () => {
@@ -143,6 +158,7 @@ describe('EmbeddingsVoyageAiMultimodal', () => {
 			];
 
 			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
+				.mockReturnValueOnce('voyage-multimodal-3') // modelName
 				.mockReturnValueOnce({}) // options
 				.mockReturnValueOnce('text') // contentType
 				.mockReturnValueOnce('Test text input'); // textInput
@@ -189,6 +205,7 @@ describe('EmbeddingsVoyageAiMultimodal', () => {
 			const mockInputData: INodeExecutionData[] = [{ json: {} }];
 
 			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
+				.mockReturnValueOnce('voyage-multimodal-3') // modelName
 				.mockReturnValueOnce({}) // options
 				.mockReturnValueOnce('text') // contentType
 				.mockReturnValueOnce(''); // textInput (empty)
@@ -207,6 +224,7 @@ describe('EmbeddingsVoyageAiMultimodal', () => {
 			const mockInputData: INodeExecutionData[] = [{ json: {} }];
 
 			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
+				.mockReturnValueOnce('voyage-multimodal-3') // modelName
 				.mockReturnValueOnce({}) // options
 				.mockReturnValueOnce('textAndImageUrl') // contentType
 				.mockReturnValueOnce('Test text')
@@ -242,6 +260,7 @@ describe('EmbeddingsVoyageAiMultimodal', () => {
 			const mockInputData: INodeExecutionData[] = [{ json: {} }];
 
 			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
+				.mockReturnValueOnce('voyage-multimodal-3') // modelName
 				.mockReturnValueOnce({}) // options
 				.mockReturnValueOnce('textAndImageUrl') // contentType
 				.mockReturnValueOnce('Test text')
@@ -261,6 +280,7 @@ describe('EmbeddingsVoyageAiMultimodal', () => {
 			const mockInputData: INodeExecutionData[] = [{ json: {} }];
 
 			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
+				.mockReturnValueOnce('voyage-multimodal-3') // modelName
 				.mockReturnValueOnce({}) // options
 				.mockReturnValueOnce('imageUrl') // contentType
 				.mockReturnValueOnce('https://example.com/image.jpg');
@@ -306,6 +326,7 @@ describe('EmbeddingsVoyageAiMultimodal', () => {
 			];
 
 			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
+				.mockReturnValueOnce('voyage-multimodal-3') // modelName
 				.mockReturnValueOnce({}) // options
 				.mockReturnValueOnce('binary') // contentType
 				.mockReturnValueOnce('data'); // binaryDataKey
@@ -351,6 +372,7 @@ describe('EmbeddingsVoyageAiMultimodal', () => {
 			];
 
 			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
+				.mockReturnValueOnce('voyage-multimodal-3') // modelName
 				.mockReturnValueOnce({}) // options
 				.mockReturnValueOnce('binary') // contentType
 				.mockReturnValueOnce('data'); // binaryDataKey
@@ -379,6 +401,7 @@ describe('EmbeddingsVoyageAiMultimodal', () => {
 			];
 
 			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
+				.mockReturnValueOnce('voyage-multimodal-3') // modelName
 				.mockReturnValueOnce({}) // options
 				.mockReturnValueOnce('binary') // contentType
 				.mockReturnValueOnce('data'); // binaryDataKey
@@ -410,6 +433,7 @@ describe('EmbeddingsVoyageAiMultimodal', () => {
 			];
 
 			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
+				.mockReturnValueOnce('voyage-multimodal-3') // modelName
 				.mockReturnValueOnce({}) // options
 				.mockReturnValueOnce('binary') // contentType
 				.mockReturnValueOnce('data'); // binaryDataKey
@@ -428,6 +452,7 @@ describe('EmbeddingsVoyageAiMultimodal', () => {
 			const mockInputData: INodeExecutionData[] = [{ json: {} }];
 
 			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
+				.mockReturnValueOnce('voyage-multimodal-3') // modelName
 				.mockReturnValueOnce({}) // options
 				.mockReturnValueOnce('text') // contentType
 				.mockReturnValueOnce('Test text');
@@ -446,6 +471,7 @@ describe('EmbeddingsVoyageAiMultimodal', () => {
 			const mockInputData: INodeExecutionData[] = [{ json: {} }];
 
 			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
+				.mockReturnValueOnce('voyage-multimodal-3') // modelName
 				.mockReturnValueOnce({}) // options
 				.mockReturnValueOnce('text') // contentType
 				.mockReturnValueOnce('Test text');
@@ -470,6 +496,7 @@ describe('EmbeddingsVoyageAiMultimodal', () => {
 			const mockInputData: INodeExecutionData[] = [{ json: {} }];
 
 			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
+				.mockReturnValueOnce('voyage-multimodal-3') // modelName
 				.mockReturnValueOnce({}) // options
 				.mockReturnValueOnce('text') // contentType
 				.mockReturnValueOnce('Test text');

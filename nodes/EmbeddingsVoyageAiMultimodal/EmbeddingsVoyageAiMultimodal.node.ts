@@ -292,7 +292,7 @@ export class EmbeddingsVoyageAiMultimodal implements INodeType {
 		group: ['transform'],
 		version: 1,
 		description:
-			'Generate multimodal embeddings from text and images using VoyageAI voyage-multimodal-3 model',
+			'Generate multimodal embeddings from text and images using VoyageAI multimodal models',
 		defaults: {
 			name: 'Embeddings VoyageAI Multimodal',
 		},
@@ -328,10 +328,31 @@ export class EmbeddingsVoyageAiMultimodal implements INodeType {
 			getConnectionHintNoticeField([NodeConnectionTypes.AiVectorStore]),
 			{
 				displayName:
-					'This node generates embeddings from text, images, or both using the voyage-multimodal-3 model. Images can be provided via URL or as binary data.',
+					'This node generates embeddings from text, images, or both using VoyageAI multimodal models. Images can be provided via URL or as binary data.',
 				name: 'notice',
 				type: 'notice',
 				default: '',
+			},
+			{
+				displayName: 'Model',
+				name: 'modelName',
+				type: 'options',
+				default: 'voyage-multimodal-3',
+				description:
+					'The multimodal model to use. <a href="https://docs.voyageai.com/docs/multimodal-embeddings" target="_blank">Learn more</a>.',
+				options: [
+					{
+						name: 'Voyage-Multimodal-3.5 (Latest)',
+						value: 'voyage-multimodal-3.5',
+						description:
+							'Latest multimodal model, supports text, images, and video screenshots',
+					},
+					{
+						name: 'Voyage-Multimodal-3',
+						value: 'voyage-multimodal-3',
+						description: 'Previous generation multimodal model',
+					},
+				],
 			},
 			{
 				displayName: 'Content Type',
@@ -460,6 +481,11 @@ export class EmbeddingsVoyageAiMultimodal implements INodeType {
 	async supplyData(this: ISupplyDataFunctions, itemIndex: number): Promise<SupplyData> {
 		this.logger.debug('Supply data for VoyageAI multimodal embeddings');
 
+		const modelName = this.getNodeParameter(
+			'modelName',
+			itemIndex,
+			'voyage-multimodal-3',
+		) as string;
 		const credentials = await this.getCredentials<{ apiKey: string; url?: string }>('voyageAiApi');
 
 		const options = this.getNodeParameter('options', itemIndex, {}) as {
@@ -477,7 +503,7 @@ export class EmbeddingsVoyageAiMultimodal implements INodeType {
 		const embeddings = new VoyageAIMultimodalEmbeddings({
 			apiKey: credentials.apiKey,
 			baseURL,
-			model: 'voyage-multimodal-3',
+			model: modelName,
 			inputType,
 			truncation: options.truncation,
 			executeFunctions: this,

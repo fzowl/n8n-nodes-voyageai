@@ -1,4 +1,5 @@
-import { VoyageEmbeddings } from '@langchain/community/embeddings/voyage';
+import { VoyageAIClient } from 'voyageai';
+import { Embeddings } from '@langchain/core/embeddings';
 import {
 	NodeConnectionTypes,
 	type INodeType,
@@ -6,58 +7,166 @@ import {
 	type ISupplyDataFunctions,
 	type SupplyData,
 } from 'n8n-workflow';
-import type { ProxyAgent } from 'undici';
 
 import { logWrapper } from '../../utils/logWrapper';
 import { getConnectionHintNoticeField } from '../../utils/sharedFields';
 import { getProxyAgent } from '../../utils/httpProxyAgent';
 
 /**
- * Extended VoyageEmbeddings class that supports HTTP proxy configuration.
- * Overrides the private embeddingWithRetry method to inject proxy support into fetch.
- *
- * Note: We use 'any' casting to bypass TypeScript's private member restrictions since
- * the embeddingWithRetry method is actually accessible at runtime (JavaScript doesn't
- * enforce true private members for classes compiled from TypeScript).
+ * Custom embeddings class that wraps the VoyageAI SDK directly.
+ * Supports all voyage-4 and legacy models with full parameter control.
  */
-class VoyageEmbeddingsWithProxy extends VoyageEmbeddings {
-	private proxyAgent?: ProxyAgent;
+class VoyageAIEmbeddings extends Embeddings {
+	private client: VoyageAIClient;
+	private model: string;
+	private batchSize: number;
+	private inputType?: 'query' | 'document';
+	private outputDimension?: number;
+	private outputDtype?: string;
+	private truncation?: boolean;
+	private encodingFormat?: string;
 
-	constructor(
-		fields: ConstructorParameters<typeof VoyageEmbeddings>[0] & { proxyAgent?: ProxyAgent },
-	) {
-		super(fields);
-		this.proxyAgent = fields.proxyAgent;
+	constructor(fields: {
+		apiKey: string;
+		baseURL?: string;
+		model: string;
+		batchSize?: number;
+		inputType?: 'query' | 'document';
+		outputDimension?: number;
+		outputDtype?: string;
+		truncation?: boolean;
+		encodingFormat?: string;
+	}) {
+		super({});
 
-		// Override the embeddingWithRetry method at runtime to add proxy support
-		const self = this as any;
-		self.embeddingWithRetry = async (request: any) => {
-			const makeCompletionRequest = async () => {
-				const url = self.apiUrl;
+		this.model = fields.model;
+		this.batchSize = fields.batchSize ?? 128;
+		this.inputType = fields.inputType;
+		this.outputDimension = fields.outputDimension;
+		this.outputDtype = fields.outputDtype;
+		this.truncation = fields.truncation;
+		this.encodingFormat = fields.encodingFormat;
+
+		const clientOptions: ConstructorParameters<typeof VoyageAIClient>[0] = {
+			apiKey: fields.apiKey,
+		};
+
+		if (fields.baseURL) {
+			clientOptions.environment = fields.baseURL;
+		}
+
+		const proxyAgent = getProxyAgent(fields.baseURL || 'https://api.voyageai.com/v1');
+		if (proxyAgent) {
+			clientOptions.fetcher = async (args) => {
 				const fetchOptions: RequestInit = {
-					method: 'POST',
-					headers: {
-						'Content-Type': 'application/json',
-						Authorization: `Bearer ${self.apiKey}`,
-						...self.headers,
-					},
-					body: JSON.stringify(request),
+					method: args.method,
+					headers: args.headers as Record<string, string>,
 				};
 
-				// Add proxy agent if configured
-				if (this.proxyAgent) {
-					(fetchOptions as any).dispatcher = this.proxyAgent;
+				if (args.body) {
+					fetchOptions.body =
+						typeof args.body === 'string' ? args.body : JSON.stringify(args.body);
 				}
 
-				const response = await fetch(url, fetchOptions);
-				const json = await response.json();
-				return json;
-			};
+				(fetchOptions as any).dispatcher = proxyAgent;
 
-			return self.caller.call(makeCompletionRequest);
+				const response = await fetch(args.url, fetchOptions);
+				const responseText = await response.text();
+
+				if (response.ok) {
+					let body: any;
+					try {
+						body = JSON.parse(responseText);
+					} catch {
+						body = responseText;
+					}
+
+					return {
+						ok: true as const,
+						body,
+						headers: Object.fromEntries(response.headers.entries()),
+					};
+				} else {
+					return {
+						ok: false as const,
+						error: {
+							reason: 'status-code' as const,
+							statusCode: response.status,
+							body: responseText,
+						},
+					};
+				}
+			};
+		}
+
+		this.client = new VoyageAIClient(clientOptions);
+	}
+
+	private buildEmbedParams(input: string | string[], inputType?: 'query' | 'document') {
+		const params: any = {
+			input,
+			model: this.model,
 		};
+
+		if (inputType ?? this.inputType) {
+			params.inputType = inputType ?? this.inputType;
+		}
+		if (this.outputDimension) {
+			params.outputDimension = this.outputDimension;
+		}
+		if (this.outputDtype && this.outputDtype !== 'float') {
+			params.outputDtype = this.outputDtype;
+		}
+		if (this.truncation !== undefined) {
+			params.truncation = this.truncation;
+		}
+		if (this.encodingFormat && this.encodingFormat !== 'float') {
+			params.encodingFormat = this.encodingFormat;
+		}
+
+		return params;
+	}
+
+	async embedDocuments(texts: string[]): Promise<number[][]> {
+		const allEmbeddings: number[][] = [];
+
+		for (let i = 0; i < texts.length; i += this.batchSize) {
+			const batch = texts.slice(i, i + this.batchSize);
+			const response = await this.client.embed(this.buildEmbedParams(batch));
+
+			if (response.data) {
+				for (const item of response.data) {
+					if (item.embedding) {
+						allEmbeddings.push(item.embedding);
+					}
+				}
+			}
+		}
+
+		return allEmbeddings;
+	}
+
+	async embedQuery(text: string): Promise<number[]> {
+		const response = await this.client.embed(this.buildEmbedParams(text, 'query'));
+
+		if (response.data && response.data.length > 0 && response.data[0].embedding) {
+			return response.data[0].embedding;
+		}
+
+		return [];
 	}
 }
+
+const MODELS_SUPPORTING_DIMENSIONS = [
+	'voyage-4-large',
+	'voyage-4',
+	'voyage-4-lite',
+	'voyage-4-nano',
+	'voyage-3.5',
+	'voyage-3.5-lite',
+	'voyage-3-large',
+	'voyage-code-3',
+];
 
 export class EmbeddingsVoyageAi implements INodeType {
 	description: INodeTypeDescription = {
@@ -113,42 +222,131 @@ export class EmbeddingsVoyageAi implements INodeType {
 				type: 'options',
 				description:
 					'The model which will generate the embeddings. <a href="https://docs.voyageai.com/docs/embeddings" target="_blank">Learn more</a>.',
-				default: 'voyage-3.5',
+				default: 'voyage-4',
 				options: [
 					{
-						name: 'Voyage-3-Large (1024 Dimensions)',
-						value: 'voyage-3-large',
-						description: 'Previous generation general-purpose model',
+						name: 'Voyage-4-Large (Best Quality)',
+						value: 'voyage-4-large',
+						description: 'Flagship model, best general-purpose and multilingual quality',
 					},
 					{
-						name: 'Voyage-3.5 (1024 Dimensions)',
-						value: 'voyage-3.5',
-						description: 'Latest general-purpose model, best quality',
+						name: 'Voyage-4 (General Purpose)',
+						value: 'voyage-4',
+						description: 'General-purpose model, strong quality',
 					},
 					{
-						name: 'Voyage-3.5-Lite (1024 Dimensions)',
-						value: 'voyage-3.5-lite',
+						name: 'Voyage-4-Lite (Fast & Affordable)',
+						value: 'voyage-4-lite',
 						description: 'Optimized for latency and cost',
 					},
 					{
-						name: 'Voyage-Code-3 (1024 Dimensions)',
+						name: 'Voyage-4-Nano (Open Weight)',
+						value: 'voyage-4-nano',
+						description: 'Open-weight model, smallest and fastest',
+					},
+					{
+						name: 'Voyage-Code-3 (Code)',
 						value: 'voyage-code-3',
 						description: 'Optimized for code retrieval',
 					},
 					{
-						name: 'Voyage-Finance-2 (1024 Dimensions)',
+						name: 'Voyage-Finance-2 (Finance)',
 						value: 'voyage-finance-2',
 						description: 'Optimized for finance domain',
 					},
 					{
-						name: 'Voyage-Law-2 (1024 Dimensions)',
+						name: 'Voyage-Law-2 (Legal)',
 						value: 'voyage-law-2',
 						description: 'Optimized for legal domain',
 					},
 					{
-						name: 'Voyage-Multilingual-2 (1024 Dimensions)',
+						name: 'Voyage-Multilingual-2 (Multilingual)',
 						value: 'voyage-multilingual-2',
 						description: 'Optimized for multilingual content',
+					},
+					{
+						name: 'Voyage-3.5 (Legacy)',
+						value: 'voyage-3.5',
+						description: 'Previous generation general-purpose',
+					},
+					{
+						name: 'Voyage-3.5-Lite (Legacy)',
+						value: 'voyage-3.5-lite',
+						description: 'Previous generation lite',
+					},
+					{
+						name: 'Voyage-3-Large (Legacy)',
+						value: 'voyage-3-large',
+						description: 'Previous generation large',
+					},
+				],
+			},
+			{
+				displayName: 'Output Dimension',
+				name: 'outputDimension',
+				type: 'options',
+				default: 0,
+				description:
+					'The number of dimensions for the output embeddings. Only supported by voyage-4*, voyage-3.5*, voyage-3-large, and voyage-code-3.',
+				displayOptions: {
+					show: {
+						modelName: MODELS_SUPPORTING_DIMENSIONS,
+					},
+				},
+				options: [
+					{
+						name: 'Default (1024)',
+						value: 0,
+					},
+					{
+						name: '256',
+						value: 256,
+					},
+					{
+						name: '512',
+						value: 512,
+					},
+					{
+						name: '1024',
+						value: 1024,
+					},
+					{
+						name: '2048',
+						value: 2048,
+					},
+				],
+			},
+			{
+				displayName: 'Output Data Type',
+				name: 'outputDtype',
+				type: 'options',
+				default: 'float',
+				description: 'Quantization reduces storage and improves latency.',
+				displayOptions: {
+					show: {
+						modelName: MODELS_SUPPORTING_DIMENSIONS,
+					},
+				},
+				options: [
+					{
+						name: 'Float (Full Precision)',
+						value: 'float',
+					},
+					{
+						name: 'Int8',
+						value: 'int8',
+					},
+					{
+						name: 'Uint8',
+						value: 'uint8',
+					},
+					{
+						name: 'Binary',
+						value: 'binary',
+					},
+					{
+						name: 'Ubinary',
+						value: 'ubinary',
 					},
 				],
 			},
@@ -164,7 +362,7 @@ export class EmbeddingsVoyageAi implements INodeType {
 						displayName: 'Batch Size',
 						name: 'batchSize',
 						type: 'number',
-						default: 512,
+						default: 128,
 						typeOptions: { maxValue: 1000 },
 						description: 'Maximum number of documents to send in each request (max 1000)',
 					},
@@ -190,36 +388,6 @@ export class EmbeddingsVoyageAi implements INodeType {
 								name: 'Document',
 								value: 'document',
 								description: 'Optimize for documents to be searched',
-							},
-						],
-					},
-					{
-						displayName: 'Output Dimension',
-						name: 'outputDimension',
-						type: 'options',
-						default: 0,
-						description:
-							'The number of dimensions for the output embeddings. Only supported by voyage-3.5, voyage-3.5-lite, and voyage-code-3 models.',
-						options: [
-							{
-								name: 'Default (1024)',
-								value: 0,
-							},
-							{
-								name: '256',
-								value: 256,
-							},
-							{
-								name: '512',
-								value: 512,
-							},
-							{
-								name: '1024',
-								value: 1024,
-							},
-							{
-								name: '2048',
-								value: 2048,
 							},
 						],
 					},
@@ -250,24 +418,6 @@ export class EmbeddingsVoyageAi implements INodeType {
 							},
 						],
 					},
-					{
-						displayName: 'Output Data Type',
-						name: 'outputDtype',
-						type: 'options',
-						default: 'float',
-						description:
-							'The data type for embeddings. Quantization options reduce storage and improve latency.',
-						options: [
-							{
-								name: 'Float (Full Precision)',
-								value: 'float',
-							},
-							{
-								name: 'Int8 (8-Bit Integer)',
-								value: 'int8',
-							},
-						],
-					},
 				],
 			},
 		],
@@ -276,23 +426,21 @@ export class EmbeddingsVoyageAi implements INodeType {
 	async supplyData(this: ISupplyDataFunctions, itemIndex: number): Promise<SupplyData> {
 		this.logger.debug('Supply data for embeddings VoyageAI');
 
-		const modelName = this.getNodeParameter('modelName', itemIndex, 'voyage-3.5') as string;
+		const modelName = this.getNodeParameter('modelName', itemIndex, 'voyage-4') as string;
 		const credentials = await this.getCredentials<{ apiKey: string; url?: string }>('voyageAiApi');
+
+		const outputDimensionRaw = this.getNodeParameter('outputDimension', itemIndex, 0) as number;
+		const outputDtypeRaw = this.getNodeParameter('outputDtype', itemIndex, 'float') as string;
 
 		const options = this.getNodeParameter('options', itemIndex, {}) as {
 			batchSize?: number;
 			inputType?: string;
-			outputDimension?: number;
 			truncation?: boolean;
 			encodingFormat?: 'float' | 'base64';
-			outputDtype?: 'float' | 'int8';
 		};
 
 		// Get base URL from credentials (defaults to https://api.voyageai.com/v1)
 		const baseURL = credentials.url || 'https://api.voyageai.com/v1';
-
-		// Configure proxy support
-		const proxyAgent = getProxyAgent(baseURL);
 
 		// Convert empty string to undefined for inputType
 		const inputType =
@@ -302,20 +450,18 @@ export class EmbeddingsVoyageAi implements INodeType {
 
 		// Convert 0 to undefined for outputDimension (0 means "use default")
 		const outputDimension =
-			options.outputDimension && options.outputDimension !== 0
-				? options.outputDimension
-				: undefined;
+			outputDimensionRaw && outputDimensionRaw !== 0 ? outputDimensionRaw : undefined;
 
-		const embeddings = new VoyageEmbeddingsWithProxy({
+		const embeddings = new VoyageAIEmbeddings({
 			apiKey: credentials.apiKey,
-			modelName,
+			baseURL,
+			model: modelName,
 			batchSize: options.batchSize,
 			inputType,
 			outputDimension,
+			outputDtype: outputDtypeRaw,
 			truncation: options.truncation,
 			encodingFormat: options.encodingFormat,
-			outputDtype: options.outputDtype,
-			proxyAgent,
 		});
 
 		return {

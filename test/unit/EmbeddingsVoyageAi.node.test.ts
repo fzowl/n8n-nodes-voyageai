@@ -1,4 +1,4 @@
-import { VoyageEmbeddings } from '@langchain/community/embeddings/voyage';
+import { VoyageAIClient } from 'voyageai';
 import { mock } from 'jest-mock-extended';
 import type { ISupplyDataFunctions } from 'n8n-workflow';
 
@@ -7,9 +7,9 @@ import { getProxyAgent } from '@utils/httpProxyAgent';
 
 import { EmbeddingsVoyageAi } from '../../nodes/EmbeddingsVoyageAi/EmbeddingsVoyageAi.node';
 
-// Mock the VoyageEmbeddings class
-jest.mock('@langchain/community/embeddings/voyage', () => ({
-	VoyageEmbeddings: jest.fn(),
+// Mock the VoyageAIClient
+jest.mock('voyageai', () => ({
+	VoyageAIClient: jest.fn(),
 }));
 
 // Mock the logWrapper utility
@@ -25,7 +25,7 @@ jest.mock('@utils/httpProxyAgent', () => ({
 describe('EmbeddingsVoyageAi', () => {
 	let embeddingsVoyageAi: EmbeddingsVoyageAi;
 	let mockSupplyDataFunctions: ISupplyDataFunctions;
-	let mockVoyageEmbeddings: jest.Mocked<VoyageEmbeddings>;
+	let mockVoyageAIClient: jest.Mocked<VoyageAIClient>;
 
 	beforeEach(() => {
 		embeddingsVoyageAi = new EmbeddingsVoyageAi();
@@ -33,15 +33,13 @@ describe('EmbeddingsVoyageAi', () => {
 		// Reset the mocks
 		jest.clearAllMocks();
 
-		// Create a mock VoyageEmbeddings instance
-		mockVoyageEmbeddings = {
-			embedQuery: jest.fn(),
-			embedDocuments: jest.fn(),
-		} as unknown as jest.Mocked<VoyageEmbeddings>;
+		// Create a mock VoyageAIClient instance
+		mockVoyageAIClient = {
+			embed: jest.fn(),
+		} as unknown as jest.Mocked<VoyageAIClient>;
 
-		// Make the VoyageEmbeddings constructor return our mock instance
-		// Note: The actual implementation extends VoyageEmbeddings, so we mock the base class
-		(VoyageEmbeddings as unknown as jest.Mock).mockImplementation(() => mockVoyageEmbeddings);
+		// Make the VoyageAIClient constructor return our mock instance
+		(VoyageAIClient as unknown as jest.Mock).mockImplementation(() => mockVoyageAIClient);
 
 		// Create mock supply data functions
 		mockSupplyDataFunctions = mock<ISupplyDataFunctions>({
@@ -65,13 +63,42 @@ describe('EmbeddingsVoyageAi', () => {
 			expect(embeddingsVoyageAi.description.credentials?.[0].name).toBe('voyageAiApi');
 		});
 
-		it('should have model parameter', () => {
+		it('should have model parameter with voyage-4 as default', () => {
 			const modelParam = embeddingsVoyageAi.description.properties.find(
 				(p) => p.name === 'modelName',
 			);
 			expect(modelParam).toBeDefined();
 			expect(modelParam?.type).toBe('options');
-			expect(modelParam?.default).toBe('voyage-3.5');
+			expect(modelParam?.default).toBe('voyage-4');
+		});
+
+		it('should include voyage-4 model family', () => {
+			const modelParam = embeddingsVoyageAi.description.properties.find(
+				(p) => p.name === 'modelName',
+			);
+			const options = (modelParam as any)?.options || [];
+			const modelValues = options.map((o: any) => o.value);
+
+			expect(modelValues).toContain('voyage-4-large');
+			expect(modelValues).toContain('voyage-4');
+			expect(modelValues).toContain('voyage-4-lite');
+			expect(modelValues).toContain('voyage-4-nano');
+		});
+
+		it('should include legacy models', () => {
+			const modelParam = embeddingsVoyageAi.description.properties.find(
+				(p) => p.name === 'modelName',
+			);
+			const options = (modelParam as any)?.options || [];
+			const modelValues = options.map((o: any) => o.value);
+
+			expect(modelValues).toContain('voyage-3.5');
+			expect(modelValues).toContain('voyage-3.5-lite');
+			expect(modelValues).toContain('voyage-3-large');
+			expect(modelValues).toContain('voyage-code-3');
+			expect(modelValues).toContain('voyage-finance-2');
+			expect(modelValues).toContain('voyage-law-2');
+			expect(modelValues).toContain('voyage-multilingual-2');
 		});
 
 		it('should have options parameter', () => {
@@ -81,13 +108,36 @@ describe('EmbeddingsVoyageAi', () => {
 			expect(optionsParam).toBeDefined();
 			expect(optionsParam?.type).toBe('collection');
 		});
+
+		it('should have outputDimension as top-level parameter with displayOptions', () => {
+			const dimParam = embeddingsVoyageAi.description.properties.find(
+				(p) => p.name === 'outputDimension',
+			);
+			expect(dimParam).toBeDefined();
+			expect(dimParam?.type).toBe('options');
+			expect(dimParam?.displayOptions).toBeDefined();
+			expect(dimParam?.displayOptions?.show?.modelName).toBeDefined();
+		});
+
+		it('should have outputDtype as top-level parameter with all 5 options', () => {
+			const dtypeParam = embeddingsVoyageAi.description.properties.find(
+				(p) => p.name === 'outputDtype',
+			);
+			expect(dtypeParam).toBeDefined();
+			expect(dtypeParam?.type).toBe('options');
+			const options = (dtypeParam as any)?.options || [];
+			const values = options.map((o: any) => o.value);
+			expect(values).toEqual(['float', 'int8', 'uint8', 'binary', 'ubinary']);
+		});
 	});
 
 	describe('supplyData', () => {
-		it('should create VoyageEmbeddings with default model and return wrapped instance', async () => {
+		it('should create VoyageAIClient with default model and return wrapped instance', async () => {
 			const mockCredentials = { apiKey: 'test-api-key', url: 'https://api.voyageai.com/v1' };
 			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
-				.mockReturnValueOnce('voyage-3.5') // modelName
+				.mockReturnValueOnce('voyage-4') // modelName
+				.mockReturnValueOnce(0) // outputDimension
+				.mockReturnValueOnce('float') // outputDtype
 				.mockReturnValueOnce({}); // options
 			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
 
@@ -96,19 +146,20 @@ describe('EmbeddingsVoyageAi', () => {
 			expect(mockSupplyDataFunctions.getNodeParameter).toHaveBeenCalledWith(
 				'modelName',
 				0,
-				'voyage-3.5',
+				'voyage-4',
 			);
 			expect(mockSupplyDataFunctions.getNodeParameter).toHaveBeenCalledWith('options', 0, {});
 			expect(mockSupplyDataFunctions.getCredentials).toHaveBeenCalledWith('voyageAiApi');
-			expect(getProxyAgent).toHaveBeenCalledWith('https://api.voyageai.com/v1');
 			expect(logWrapper).toHaveBeenCalled();
 			expect(result.response).toBeDefined();
 		});
 
-		it('should create VoyageEmbeddings with custom model', async () => {
+		it('should create VoyageAIClient with custom model', async () => {
 			const mockCredentials = { apiKey: 'custom-api-key' };
 			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
 				.mockReturnValueOnce('voyage-code-3') // modelName
+				.mockReturnValueOnce(0) // outputDimension
+				.mockReturnValueOnce('float') // outputDtype
 				.mockReturnValueOnce({}); // options
 			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
 
@@ -117,12 +168,16 @@ describe('EmbeddingsVoyageAi', () => {
 			expect(mockSupplyDataFunctions.getNodeParameter).toHaveBeenCalledWith(
 				'modelName',
 				0,
-				'voyage-3.5',
+				'voyage-4',
 			);
 		});
 
 		it('should handle all model options correctly', async () => {
 			const models = [
+				'voyage-4-large',
+				'voyage-4',
+				'voyage-4-lite',
+				'voyage-4-nano',
 				'voyage-3.5',
 				'voyage-3.5-lite',
 				'voyage-3-large',
@@ -138,6 +193,8 @@ describe('EmbeddingsVoyageAi', () => {
 				const mockCredentials = { apiKey: 'test-api-key' };
 				(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
 					.mockReturnValueOnce(model)
+					.mockReturnValueOnce(0) // outputDimension
+					.mockReturnValueOnce('float') // outputDtype
 					.mockReturnValueOnce({});
 				(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
 
@@ -150,7 +207,9 @@ describe('EmbeddingsVoyageAi', () => {
 		it('should handle different item indices', async () => {
 			const mockCredentials = { apiKey: 'test-api-key' };
 			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
-				.mockReturnValueOnce('voyage-3.5')
+				.mockReturnValueOnce('voyage-4')
+				.mockReturnValueOnce(0) // outputDimension
+				.mockReturnValueOnce('float') // outputDtype
 				.mockReturnValueOnce({});
 			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
 
@@ -159,14 +218,16 @@ describe('EmbeddingsVoyageAi', () => {
 			expect(mockSupplyDataFunctions.getNodeParameter).toHaveBeenCalledWith(
 				'modelName',
 				2,
-				'voyage-3.5',
+				'voyage-4',
 			);
 			expect(mockSupplyDataFunctions.getNodeParameter).toHaveBeenCalledWith('options', 2, {});
 		});
 
 		it('should throw error when credentials are missing', async () => {
 			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
-				.mockReturnValueOnce('voyage-3.5')
+				.mockReturnValueOnce('voyage-4')
+				.mockReturnValueOnce(0) // outputDimension
+				.mockReturnValueOnce('float') // outputDtype
 				.mockReturnValueOnce({});
 			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockRejectedValue(
 				new Error('Missing credentials'),
@@ -180,7 +241,9 @@ describe('EmbeddingsVoyageAi', () => {
 		it('should use default baseURL when not provided in credentials', async () => {
 			const mockCredentials = { apiKey: 'test-api-key' };
 			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
-				.mockReturnValueOnce('voyage-3.5')
+				.mockReturnValueOnce('voyage-4')
+				.mockReturnValueOnce(0) // outputDimension
+				.mockReturnValueOnce('float') // outputDtype
 				.mockReturnValueOnce({});
 			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
 
@@ -196,7 +259,9 @@ describe('EmbeddingsVoyageAi', () => {
 			const options = { batchSize: 256 };
 
 			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
-				.mockReturnValueOnce('voyage-3.5')
+				.mockReturnValueOnce('voyage-4')
+				.mockReturnValueOnce(0) // outputDimension
+				.mockReturnValueOnce('float') // outputDtype
 				.mockReturnValueOnce(options);
 			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
 
@@ -210,7 +275,9 @@ describe('EmbeddingsVoyageAi', () => {
 			const options = { inputType: 'query' };
 
 			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
-				.mockReturnValueOnce('voyage-3.5')
+				.mockReturnValueOnce('voyage-4')
+				.mockReturnValueOnce(0) // outputDimension
+				.mockReturnValueOnce('float') // outputDtype
 				.mockReturnValueOnce(options);
 			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
 
@@ -224,7 +291,9 @@ describe('EmbeddingsVoyageAi', () => {
 			const options = { inputType: 'document' };
 
 			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
-				.mockReturnValueOnce('voyage-3.5')
+				.mockReturnValueOnce('voyage-4')
+				.mockReturnValueOnce(0) // outputDimension
+				.mockReturnValueOnce('float') // outputDtype
 				.mockReturnValueOnce(options);
 			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
 
@@ -238,7 +307,9 @@ describe('EmbeddingsVoyageAi', () => {
 			const options = { inputType: '' };
 
 			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
-				.mockReturnValueOnce('voyage-3.5')
+				.mockReturnValueOnce('voyage-4')
+				.mockReturnValueOnce(0) // outputDimension
+				.mockReturnValueOnce('float') // outputDtype
 				.mockReturnValueOnce(options);
 			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
 
@@ -247,32 +318,42 @@ describe('EmbeddingsVoyageAi', () => {
 			expect(mockSupplyDataFunctions.getNodeParameter).toHaveBeenCalledWith('options', 0, {});
 		});
 
-		it('should handle outputDimension option', async () => {
+		it('should handle outputDimension parameter', async () => {
 			const mockCredentials = { apiKey: 'test-api-key' };
-			const options = { outputDimension: 512 };
 
 			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
-				.mockReturnValueOnce('voyage-3.5')
-				.mockReturnValueOnce(options);
+				.mockReturnValueOnce('voyage-4')
+				.mockReturnValueOnce(512) // outputDimension
+				.mockReturnValueOnce('float') // outputDtype
+				.mockReturnValueOnce({});
 			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
 
 			await embeddingsVoyageAi.supplyData.call(mockSupplyDataFunctions, 0);
 
-			expect(mockSupplyDataFunctions.getNodeParameter).toHaveBeenCalledWith('options', 0, {});
+			expect(mockSupplyDataFunctions.getNodeParameter).toHaveBeenCalledWith(
+				'outputDimension',
+				0,
+				0,
+			);
 		});
 
 		it('should convert 0 outputDimension to undefined (use default)', async () => {
 			const mockCredentials = { apiKey: 'test-api-key' };
-			const options = { outputDimension: 0 };
 
 			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
-				.mockReturnValueOnce('voyage-3.5')
-				.mockReturnValueOnce(options);
+				.mockReturnValueOnce('voyage-4')
+				.mockReturnValueOnce(0) // outputDimension
+				.mockReturnValueOnce('float') // outputDtype
+				.mockReturnValueOnce({});
 			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
 
 			await embeddingsVoyageAi.supplyData.call(mockSupplyDataFunctions, 0);
 
-			expect(mockSupplyDataFunctions.getNodeParameter).toHaveBeenCalledWith('options', 0, {});
+			expect(mockSupplyDataFunctions.getNodeParameter).toHaveBeenCalledWith(
+				'outputDimension',
+				0,
+				0,
+			);
 		});
 
 		it('should handle truncation option', async () => {
@@ -280,7 +361,9 @@ describe('EmbeddingsVoyageAi', () => {
 			const options = { truncation: false };
 
 			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
-				.mockReturnValueOnce('voyage-3.5')
+				.mockReturnValueOnce('voyage-4')
+				.mockReturnValueOnce(0) // outputDimension
+				.mockReturnValueOnce('float') // outputDtype
 				.mockReturnValueOnce(options);
 			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
 
@@ -294,7 +377,9 @@ describe('EmbeddingsVoyageAi', () => {
 			const options = { encodingFormat: 'base64' as const };
 
 			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
-				.mockReturnValueOnce('voyage-3.5')
+				.mockReturnValueOnce('voyage-4')
+				.mockReturnValueOnce(0) // outputDimension
+				.mockReturnValueOnce('float') // outputDtype
 				.mockReturnValueOnce(options);
 			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
 
@@ -303,18 +388,28 @@ describe('EmbeddingsVoyageAi', () => {
 			expect(mockSupplyDataFunctions.getNodeParameter).toHaveBeenCalledWith('options', 0, {});
 		});
 
-		it('should handle outputDtype option with int8', async () => {
-			const mockCredentials = { apiKey: 'test-api-key' };
-			const options = { outputDtype: 'int8' as const };
+		it('should handle outputDtype parameter with all values', async () => {
+			const dtypes = ['float', 'int8', 'uint8', 'binary', 'ubinary'];
 
-			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
-				.mockReturnValueOnce('voyage-3.5')
-				.mockReturnValueOnce(options);
-			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
+			for (const dtype of dtypes) {
+				jest.clearAllMocks();
 
-			await embeddingsVoyageAi.supplyData.call(mockSupplyDataFunctions, 0);
+				const mockCredentials = { apiKey: 'test-api-key' };
+				(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
+					.mockReturnValueOnce('voyage-4')
+					.mockReturnValueOnce(0) // outputDimension
+					.mockReturnValueOnce(dtype) // outputDtype
+					.mockReturnValueOnce({});
+				(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
 
-			expect(mockSupplyDataFunctions.getNodeParameter).toHaveBeenCalledWith('options', 0, {});
+				await embeddingsVoyageAi.supplyData.call(mockSupplyDataFunctions, 0);
+
+				expect(mockSupplyDataFunctions.getNodeParameter).toHaveBeenCalledWith(
+					'outputDtype',
+					0,
+					'float',
+				);
+			}
 		});
 
 		it('should handle multiple options together', async () => {
@@ -322,14 +417,14 @@ describe('EmbeddingsVoyageAi', () => {
 			const options = {
 				batchSize: 128,
 				inputType: 'document',
-				outputDimension: 256,
 				truncation: true,
 				encodingFormat: 'float' as const,
-				outputDtype: 'int8' as const,
 			};
 
 			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
-				.mockReturnValueOnce('voyage-3.5')
+				.mockReturnValueOnce('voyage-4')
+				.mockReturnValueOnce(256) // outputDimension
+				.mockReturnValueOnce('int8') // outputDtype
 				.mockReturnValueOnce(options);
 			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
 
@@ -344,7 +439,9 @@ describe('EmbeddingsVoyageAi', () => {
 			const mockCredentials = { apiKey: 'test-api-key', url: 'https://custom-api.com/v1' };
 
 			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
-				.mockReturnValueOnce('voyage-3.5')
+				.mockReturnValueOnce('voyage-4')
+				.mockReturnValueOnce(0) // outputDimension
+				.mockReturnValueOnce('float') // outputDtype
 				.mockReturnValueOnce({});
 			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
 
@@ -359,7 +456,9 @@ describe('EmbeddingsVoyageAi', () => {
 
 			const mockCredentials = { apiKey: 'test-api-key' };
 			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
-				.mockReturnValueOnce('voyage-3.5')
+				.mockReturnValueOnce('voyage-4')
+				.mockReturnValueOnce(0) // outputDimension
+				.mockReturnValueOnce('float') // outputDtype
 				.mockReturnValueOnce({});
 			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
 
@@ -373,7 +472,9 @@ describe('EmbeddingsVoyageAi', () => {
 		it('should call logger.debug', async () => {
 			const mockCredentials = { apiKey: 'test-api-key' };
 			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
-				.mockReturnValueOnce('voyage-3.5')
+				.mockReturnValueOnce('voyage-4')
+				.mockReturnValueOnce(0) // outputDimension
+				.mockReturnValueOnce('float') // outputDtype
 				.mockReturnValueOnce({});
 			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
 
@@ -387,7 +488,9 @@ describe('EmbeddingsVoyageAi', () => {
 		it('should wrap embeddings instance with logWrapper', async () => {
 			const mockCredentials = { apiKey: 'test-api-key' };
 			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
-				.mockReturnValueOnce('voyage-3.5')
+				.mockReturnValueOnce('voyage-4')
+				.mockReturnValueOnce(0) // outputDimension
+				.mockReturnValueOnce('float') // outputDtype
 				.mockReturnValueOnce({});
 			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
 

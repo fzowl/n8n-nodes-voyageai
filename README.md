@@ -20,25 +20,38 @@ npm install n8n-nodes-voyageai
 
 ### Embeddings VoyageAI
 
-Generate text embeddings using VoyageAI's embedding models.
+Generate text embeddings using VoyageAI's embedding models. Uses the official `voyageai` SDK directly.
 
 **Supported models:**
 
-| Model | Dimensions | Description |
-|-------|-----------|-------------|
-| voyage-3.5 | 1024 | Latest general-purpose, best quality |
-| voyage-3.5-lite | 1024 | Optimized for latency and cost |
-| voyage-3-large | 1024 | Previous generation general-purpose |
-| voyage-code-3 | 1024 | Optimized for code retrieval |
-| voyage-finance-2 | 1024 | Optimized for finance domain |
-| voyage-law-2 | 1024 | Optimized for legal domain |
-| voyage-multilingual-2 | 1024 | Optimized for multilingual content |
+| Model | Default Dimensions | Flexible Dimensions | Description |
+|-------|-------------------|---------------------|-------------|
+| voyage-4-large | 1024 | 256, 512, 1024, 2048 | Flagship model, best general-purpose and multilingual quality |
+| voyage-4 *(default)* | 1024 | 256, 512, 1024, 2048 | General-purpose model, strong quality |
+| voyage-4-lite | 1024 | 256, 512, 1024, 2048 | Optimized for latency and cost |
+| voyage-4-nano | 1024 | 256, 512, 1024, 2048 | Open-weight model, smallest and fastest |
+| voyage-code-3 | 1024 | 256, 512, 1024, 2048 | Optimized for code retrieval |
+| voyage-finance-2 | 1024 | - | Optimized for finance domain |
+| voyage-law-2 | 1024 | - | Optimized for legal domain |
+| voyage-multilingual-2 | 1024 | - | Optimized for multilingual content |
+| voyage-3.5 | 1024 | 256, 512, 1024, 2048 | Previous generation general-purpose |
+| voyage-3.5-lite | 1024 | 256, 512, 1024, 2048 | Previous generation lite |
+| voyage-3-large | 1024 | 256, 512, 1024, 2048 | Previous generation large |
 
-**Options:** batch size, input type (query/document), output dimension (256/512/1024/2048), truncation, encoding format, output data type.
+**Options:** batch size, input type (query/document), output dimension (256/512/1024/2048), truncation, encoding format, output data type (float/int8/uint8/binary/ubinary).
+
+Output dimension and output data type are shown conditionally for models that support flexible dimensions (voyage-4*, voyage-3.5*, voyage-3-large, voyage-code-3).
 
 ### Embeddings VoyageAI Multimodal
 
-Generate multimodal embeddings from text, images, or both using the `voyage-multimodal-3` model.
+Generate multimodal embeddings from text, images, or both using VoyageAI multimodal models.
+
+**Supported models:**
+
+| Model | Description |
+|-------|-------------|
+| voyage-multimodal-3.5 | Latest multimodal model, supports text, images, and video screenshots |
+| voyage-multimodal-3 *(default)* | Previous generation multimodal model |
 
 **Content types:** Text only, Image URL only, Text + Image URL, Binary image only, Text + Binary image.
 
