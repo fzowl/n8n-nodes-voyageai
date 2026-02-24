@@ -337,7 +337,7 @@ export class EmbeddingsVoyageAiMultimodal implements INodeType {
 				displayName: 'Model',
 				name: 'modelName',
 				type: 'options',
-				default: 'voyage-multimodal-3',
+				default: 'voyage-multimodal-3.5',
 				description:
 					'The multimodal model to use. <a href="https://docs.voyageai.com/docs/multimodal-embeddings" target="_blank">Learn more</a>.',
 				options: [
@@ -484,7 +484,7 @@ export class EmbeddingsVoyageAiMultimodal implements INodeType {
 		const modelName = this.getNodeParameter(
 			'modelName',
 			itemIndex,
-			'voyage-multimodal-3',
+			'voyage-multimodal-3.5',
 		) as string;
 		const credentials = await this.getCredentials<{ apiKey: string; url?: string }>('voyageAiApi');
 

@@ -50,8 +50,8 @@ Generate multimodal embeddings from text, images, or both using VoyageAI multimo
 
 | Model | Description |
 |-------|-------------|
-| voyage-multimodal-3.5 | Latest multimodal model, supports text, images, and video screenshots |
-| voyage-multimodal-3 *(default)* | Previous generation multimodal model |
+| voyage-multimodal-3.5 *(default)* | Latest multimodal model, supports text, images, and video screenshots |
+| voyage-multimodal-3 | Previous generation multimodal model |
 
 **Content types:** Text only, Image URL only, Text + Image URL, Binary image only, Text + Binary image.
 

@@ -63,13 +63,13 @@ describe('EmbeddingsVoyageAiMultimodal', () => {
 			expect(embeddingsNode.description.version).toBe(1);
 		});
 
-		it('should have model parameter with voyage-multimodal-3 as default', () => {
+		it('should have model parameter with voyage-multimodal-3.5 as default', () => {
 			const modelParam = embeddingsNode.description.properties.find(
 				(p) => p.name === 'modelName',
 			);
 			expect(modelParam).toBeDefined();
 			expect(modelParam?.type).toBe('options');
-			expect(modelParam?.default).toBe('voyage-multimodal-3');
+			expect(modelParam?.default).toBe('voyage-multimodal-3.5');
 		});
 
 		it('should include voyage-multimodal-3.5 model option', () => {
