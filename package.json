@@ -2,7 +2,9 @@
 	"name": "n8n-nodes-voyageai",
 	"version": "0.1.0",
 	"description": "n8n community node for VoyageAI embeddings and reranking",
-	"keywords": ["n8n-community-node-package"],
+	"keywords": [
+		"n8n-community-node-package"
+	],
 	"license": "MIT",
 	"author": {
 		"name": "Zoltan Fodi"
@@ -12,7 +14,9 @@
 		"url": "https://github.com/fodizoltan/n8n-nodes-voyageai.git"
 	},
 	"main": "dist/nodes/EmbeddingsVoyageAi/EmbeddingsVoyageAi.node.js",
-	"files": ["dist"],
+	"files": [
+		"dist"
+	],
 	"scripts": {
 		"build": "tsc && copyfiles \"credentials/**/*.svg\" \"nodes/**/*.svg\" dist/",
 		"dev": "tsc --watch",
@@ -27,7 +31,9 @@
 	},
 	"n8n": {
 		"n8nNodesApiVersion": 1,
-		"credentials": ["dist/credentials/VoyageAiApi.credentials.js"],
+		"credentials": [
+			"dist/credentials/VoyageAiApi.credentials.js"
+		],
 		"nodes": [
 			"dist/nodes/EmbeddingsVoyageAi/EmbeddingsVoyageAi.node.js",
 			"dist/nodes/EmbeddingsVoyageAiMultimodal/EmbeddingsVoyageAiMultimodal.node.js",
@@ -43,7 +49,7 @@
 		"@langchain/core": "^0.3.68",
 		"proxy-from-env": "^1.1.0",
 		"undici": "^6.0.0",
-		"voyageai": "^0.0.8"
+		"voyageai": "^0.2.1"
 	},
 	"devDependencies": {
 		"@types/jest": "^29.5.14",

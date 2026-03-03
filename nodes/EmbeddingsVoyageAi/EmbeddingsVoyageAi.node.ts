@@ -11,6 +11,7 @@ import {
 import { logWrapper } from '../../utils/logWrapper';
 import { getConnectionHintNoticeField } from '../../utils/sharedFields';
 import { getProxyAgent } from '../../utils/httpProxyAgent';
+import { getTokenBudget, countTokensForTexts } from '../../utils/tokenBudget';
 
 /**
  * Custom embeddings class that wraps the VoyageAI SDK directly.
@@ -57,46 +58,9 @@ class VoyageAIEmbeddings extends Embeddings {
 
 		const proxyAgent = getProxyAgent(fields.baseURL || 'https://api.voyageai.com/v1');
 		if (proxyAgent) {
-			clientOptions.fetcher = async (args) => {
-				const fetchOptions: RequestInit = {
-					method: args.method,
-					headers: args.headers as Record<string, string>,
-				};
-
-				if (args.body) {
-					fetchOptions.body =
-						typeof args.body === 'string' ? args.body : JSON.stringify(args.body);
-				}
-
-				(fetchOptions as any).dispatcher = proxyAgent;
-
-				const response = await fetch(args.url, fetchOptions);
-				const responseText = await response.text();
-
-				if (response.ok) {
-					let body: any;
-					try {
-						body = JSON.parse(responseText);
-					} catch {
-						body = responseText;
-					}
-
-					return {
-						ok: true as const,
-						body,
-						headers: Object.fromEntries(response.headers.entries()),
-					};
-				} else {
-					return {
-						ok: false as const,
-						error: {
-							reason: 'status-code' as const,
-							statusCode: response.status,
-							body: responseText,
-						},
-					};
-				}
-			};
+			clientOptions.fetch = ((url: string | URL | Request, init?: RequestInit) => {
+				return fetch(url, { ...init, dispatcher: proxyAgent } as any);
+			}) as typeof fetch;
 		}
 
 		this.client = new VoyageAIClient(clientOptions);
@@ -129,9 +93,33 @@ class VoyageAIEmbeddings extends Embeddings {
 
 	async embedDocuments(texts: string[]): Promise<number[][]> {
 		const allEmbeddings: number[][] = [];
+		const tokenBudget = getTokenBudget(this.model);
 
-		for (let i = 0; i < texts.length; i += this.batchSize) {
-			const batch = texts.slice(i, i + this.batchSize);
+		// Replace empty strings with a space to avoid API errors
+		const sanitized = texts.map((t) => (t === '' ? ' ' : t));
+
+		// Get exact token counts upfront (falls back to heuristic on error)
+		const tokenCounts = await countTokensForTexts(this.client, sanitized, this.model);
+
+		// Greedy packing: fill batch until batchSize count OR token budget reached
+		let i = 0;
+		while (i < sanitized.length) {
+			const batch: string[] = [];
+			let batchTokens = 0;
+
+			while (i < sanitized.length && batch.length < this.batchSize) {
+				const textTokens = tokenCounts[i];
+
+				// Always include at least one text per batch to prevent infinite loop
+				if (batch.length > 0 && batchTokens + textTokens > tokenBudget) {
+					break;
+				}
+
+				batch.push(sanitized[i]);
+				batchTokens += textTokens;
+				i++;
+			}
+
 			const response = await this.client.embed(this.buildEmbedParams(batch));
 
 			if (response.data) {

@@ -49,45 +49,9 @@ class VoyageReranker extends BaseDocumentCompressor {
 
 		const proxyAgent = getProxyAgent(fields.baseURL || 'https://api.voyageai.com/v1');
 		if (proxyAgent) {
-			clientOptions.fetcher = async (args) => {
-				const fetchOptions: RequestInit = {
-					method: args.method,
-					headers: args.headers as Record<string, string>,
-				};
-
-				if (args.body) {
-					fetchOptions.body = typeof args.body === 'string' ? args.body : JSON.stringify(args.body);
-				}
-
-				(fetchOptions as any).dispatcher = proxyAgent;
-
-				const response = await fetch(args.url, fetchOptions);
-				const responseText = await response.text();
-
-				if (response.ok) {
-					let body: any;
-					try {
-						body = JSON.parse(responseText);
-					} catch {
-						body = responseText;
-					}
-
-					return {
-						ok: true as const,
-						body,
-						headers: Object.fromEntries(response.headers.entries()),
-					};
-				} else {
-					return {
-						ok: false as const,
-						error: {
-							reason: 'status-code' as const,
-							statusCode: response.status,
-							body: responseText,
-						},
-					};
-				}
-			};
+			clientOptions.fetch = ((url: string | URL | Request, init?: RequestInit) => {
+				return fetch(url, { ...init, dispatcher: proxyAgent } as any);
+			}) as typeof fetch;
 		}
 
 		this.client = new VoyageAIClient(clientOptions);

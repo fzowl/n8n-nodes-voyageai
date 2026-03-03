@@ -173,12 +173,12 @@ describe('RerankerVoyageAi', () => {
 			expect(VoyageAIClient).toHaveBeenCalledWith(
 				expect.objectContaining({
 					apiKey: 'test-api-key',
-					fetcher: expect.any(Function),
+					fetch: expect.any(Function),
 				}),
 			);
 		});
 
-		it('should not add fetcher when proxy agent is not configured', async () => {
+		it('should not add fetch override when proxy agent is not configured', async () => {
 			(getProxyAgent as jest.Mock).mockReturnValue(undefined);
 
 			const mockCredentials = { apiKey: 'test-api-key' };
@@ -192,7 +192,7 @@ describe('RerankerVoyageAi', () => {
 
 			expect(VoyageAIClient).toHaveBeenCalledWith(
 				expect.not.objectContaining({
-					fetcher: expect.any(Function),
+					fetch: expect.any(Function),
 				}),
 			);
 		});
