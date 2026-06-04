@@ -48,4 +48,29 @@ describe('getConnectionHintNoticeField', () => {
 		expect(result.displayName).toContain('data-action');
 		expect(result.displayName).toContain('openSelectiveNodeCreator');
 	});
+
+	it('should handle AI Agent connection type with empty connection string', () => {
+		const result = getConnectionHintNoticeField([NodeConnectionTypes.AiAgent]);
+
+		expect(result.displayName).toContain("data-action-parameter-creatorview='AI'");
+	});
+
+	it('should handle multiple connection types with different connection strings', () => {
+		const result = getConnectionHintNoticeField([
+			NodeConnectionTypes.AiVectorStore,
+			NodeConnectionTypes.AiDocument,
+		]);
+
+		expect(result.displayName).toContain('This node needs to be connected to');
+	});
+
+	it('should use single-group format when types share the same connection string', () => {
+		const result = getConnectionHintNoticeField([
+			NodeConnectionTypes.AiAgent,
+			NodeConnectionTypes.AiChain,
+		]);
+
+		expect(result.displayName).toContain('This node must be connected to');
+		expect(result.displayName).toContain('Insert one');
+	});
 });

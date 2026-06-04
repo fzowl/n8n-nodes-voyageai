@@ -178,4 +178,20 @@ describe('callMethodAsync', () => {
 
 		expect(mockExecuteFunctions.addOutputData).toHaveBeenCalled();
 	});
+
+	it('should throw generic error when original error has no message', async () => {
+		const errorWithoutMessage = new Error();
+		errorWithoutMessage.message = '';
+		const method = jest.fn().mockRejectedValue(errorWithoutMessage);
+
+		await expect(
+			callMethodAsync.call({}, {
+				executeFunctions: mockExecuteFunctions,
+				connectionType: NodeConnectionTypes.AiEmbedding,
+				currentNodeRunIndex: 0,
+				method,
+				arguments: [],
+			}),
+		).rejects.toThrow('Error on node "TestNode"');
+	});
 });

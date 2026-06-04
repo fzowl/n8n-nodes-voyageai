@@ -514,4 +514,247 @@ describe('EmbeddingsVoyageAiMultimodal', () => {
 			expect(logWrapper).toHaveBeenCalledWith(expect.anything(), mockSupplyDataFunctions);
 		});
 	});
+
+	describe('embedDocuments (cache)', () => {
+		let embeddings: any;
+
+		beforeEach(async () => {
+			const mockCredentials = { apiKey: 'test-api-key' };
+			const mockInputData: INodeExecutionData[] = [
+				{ json: {} },
+				{ json: {} },
+			];
+
+			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
+				.mockReturnValueOnce('voyage-multimodal-3') // modelName
+				.mockReturnValueOnce({}) // options
+				.mockReturnValueOnce('text') // contentType (read once)
+				.mockReturnValueOnce('First text') // textInput item 0
+				.mockReturnValueOnce('Second text'); // textInput item 1
+			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
+			(mockSupplyDataFunctions.getInputData as jest.Mock).mockReturnValue(mockInputData);
+
+			mockVoyageAIClient.multimodalEmbed.mockResolvedValue({
+				data: [
+					{ embedding: [0.1, 0.2], index: 0 },
+					{ embedding: [0.3, 0.4], index: 1 },
+				],
+				model: 'voyage-multimodal-3',
+				usage: { total_tokens: 10 },
+			} as any);
+
+			const result = await embeddingsNode.supplyData.call(mockSupplyDataFunctions, 0);
+			embeddings = (result.response as any).logWrapped;
+		});
+
+		it('should return cached embeddings for known documents', async () => {
+			const result = await embeddings.embedDocuments(['First text', 'Second text']);
+			expect(result).toEqual([[0.1, 0.2], [0.3, 0.4]]);
+		});
+
+		it('should fallback to first embedding when single cached and doc not found', async () => {
+			jest.clearAllMocks();
+
+			(VoyageAIClient as unknown as jest.Mock).mockImplementation(() => mockVoyageAIClient);
+
+			const mockCredentials = { apiKey: 'test-api-key' };
+			const mockInputData: INodeExecutionData[] = [{ json: {} }];
+
+			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
+				.mockReturnValueOnce('voyage-multimodal-3')
+				.mockReturnValueOnce({})
+				.mockReturnValueOnce('text') // contentType (read once)
+				.mockReturnValueOnce('Known text');
+			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
+			(mockSupplyDataFunctions.getInputData as jest.Mock).mockReturnValue(mockInputData);
+
+			mockVoyageAIClient.multimodalEmbed.mockResolvedValue({
+				data: [{ embedding: [0.5, 0.6], index: 0 }],
+				model: 'voyage-multimodal-3',
+				usage: { total_tokens: 5 },
+			} as any);
+
+			const result2 = await embeddingsNode.supplyData.call(mockSupplyDataFunctions, 0);
+			const singleEmbed = (result2.response as any).logWrapped;
+
+			const res = await singleEmbed.embedDocuments(['Unknown text']);
+			expect(res).toEqual([[0.5, 0.6]]);
+		});
+
+		it('should throw when document not found in multi-item cache', async () => {
+			await expect(
+				embeddings.embedDocuments(['Nonexistent text']),
+			).rejects.toThrow('Document not found in pre-computed cache');
+		});
+	});
+
+	describe('embedQuery', () => {
+		let embeddings: any;
+
+		beforeEach(async () => {
+			const mockCredentials = { apiKey: 'test-api-key' };
+			const mockInputData: INodeExecutionData[] = [{ json: {} }];
+
+			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
+				.mockReturnValueOnce('voyage-multimodal-3')
+				.mockReturnValueOnce({})
+				.mockReturnValueOnce('text')
+				.mockReturnValueOnce('Test text');
+			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
+			(mockSupplyDataFunctions.getInputData as jest.Mock).mockReturnValue(mockInputData);
+
+			mockVoyageAIClient.multimodalEmbed.mockResolvedValue({
+				data: [{ embedding: [0.1, 0.2], index: 0 }],
+				model: 'voyage-multimodal-3',
+				usage: { total_tokens: 5 },
+			} as any);
+
+			const result = await embeddingsNode.supplyData.call(mockSupplyDataFunctions, 0);
+			embeddings = (result.response as any).logWrapped;
+		});
+
+		it('should call multimodalEmbed for query with text content', async () => {
+			mockVoyageAIClient.multimodalEmbed.mockResolvedValueOnce({
+				data: [{ embedding: [0.7, 0.8, 0.9] }],
+			} as any);
+
+			const result = await embeddings.embedQuery('search query');
+
+			expect(result).toEqual([0.7, 0.8, 0.9]);
+			expect(mockVoyageAIClient.multimodalEmbed).toHaveBeenLastCalledWith(
+				expect.objectContaining({
+					inputs: [{ content: [{ type: 'text', text: 'search query' }] }],
+					model: 'voyage-multimodal-3',
+					inputType: 'query',
+				}),
+			);
+		});
+
+		it('should throw NodeOperationError when query returns no data', async () => {
+			mockVoyageAIClient.multimodalEmbed.mockResolvedValueOnce({
+				data: [],
+			} as any);
+
+			await expect(embeddings.embedQuery('empty')).rejects.toThrow(NodeOperationError);
+		});
+
+		it('should throw NodeOperationError when API errors on query', async () => {
+			mockVoyageAIClient.multimodalEmbed.mockRejectedValueOnce(new Error('API timeout'));
+
+			await expect(embeddings.embedQuery('test')).rejects.toThrow(NodeOperationError);
+		});
+	});
+
+	describe('supplyData - Text + Binary Image Mode', () => {
+		it('should handle text and binary image combination', async () => {
+			const mockCredentials = { apiKey: 'test-api-key' };
+			const mockBinaryData = {
+				mimeType: 'image/jpeg',
+				fileSize: '2048',
+				data: '',
+			};
+			const mockInputData: INodeExecutionData[] = [
+				{
+					json: {},
+					binary: { data: mockBinaryData },
+				},
+			];
+
+			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
+				.mockReturnValueOnce('voyage-multimodal-3') // modelName
+				.mockReturnValueOnce({}) // options
+				.mockReturnValueOnce('textAndBinary') // contentType
+				.mockReturnValueOnce('Caption for image') // textInput
+				.mockReturnValueOnce('data'); // binaryDataKey
+			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
+			(mockSupplyDataFunctions.getInputData as jest.Mock).mockReturnValue(mockInputData);
+			(mockSupplyDataFunctions.helpers.getBinaryDataBuffer as jest.Mock).mockResolvedValue(
+				Buffer.from('fake-jpeg-data'),
+			);
+
+			mockVoyageAIClient.multimodalEmbed.mockResolvedValue({
+				data: [{ embedding: new Array(1024).fill(0.1), index: 0 }],
+				model: 'voyage-multimodal-3',
+				usage: { total_tokens: 10 },
+			} as any);
+
+			await embeddingsNode.supplyData.call(mockSupplyDataFunctions, 0);
+
+			expect(mockVoyageAIClient.multimodalEmbed).toHaveBeenCalledWith(
+				expect.objectContaining({
+					inputs: [
+						{
+							content: [
+								{ type: 'text', text: 'Caption for image' },
+								expect.objectContaining({
+									type: 'image_base64',
+									imageBase64: expect.stringContaining('data:image/jpeg;base64,'),
+								}),
+							],
+						},
+					],
+				}),
+			);
+		});
+	});
+
+	describe('supplyData - Embedding Count Mismatch', () => {
+		it('should throw when returned embeddings count does not match inputs', async () => {
+			const mockCredentials = { apiKey: 'test-api-key' };
+			const mockInputData: INodeExecutionData[] = [
+				{ json: {} },
+				{ json: {} },
+			];
+
+			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
+				.mockReturnValueOnce('voyage-multimodal-3')
+				.mockReturnValueOnce({})
+				.mockReturnValueOnce('text')
+				.mockReturnValueOnce('Text 1')
+				.mockReturnValueOnce('text')
+				.mockReturnValueOnce('Text 2');
+			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
+			(mockSupplyDataFunctions.getInputData as jest.Mock).mockReturnValue(mockInputData);
+
+			mockVoyageAIClient.multimodalEmbed.mockResolvedValue({
+				data: [{ embedding: [0.1], index: 0 }],
+				model: 'voyage-multimodal-3',
+				usage: { total_tokens: 10 },
+			} as any);
+
+			await expect(embeddingsNode.supplyData.call(mockSupplyDataFunctions, 0)).rejects.toThrow(
+				'Expected 2 embeddings but received 1',
+			);
+		});
+	});
+
+	describe('supplyData - Options Handling', () => {
+		it('should pass inputType when configured', async () => {
+			const mockCredentials = { apiKey: 'test-api-key' };
+			const mockInputData: INodeExecutionData[] = [{ json: {} }];
+
+			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
+				.mockReturnValueOnce('voyage-multimodal-3.5')
+				.mockReturnValueOnce({ inputType: 'document', truncation: false })
+				.mockReturnValueOnce('text')
+				.mockReturnValueOnce('Test');
+			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
+			(mockSupplyDataFunctions.getInputData as jest.Mock).mockReturnValue(mockInputData);
+
+			mockVoyageAIClient.multimodalEmbed.mockResolvedValue({
+				data: [{ embedding: [0.1], index: 0 }],
+				model: 'voyage-multimodal-3.5',
+				usage: { total_tokens: 5 },
+			} as any);
+
+			await embeddingsNode.supplyData.call(mockSupplyDataFunctions, 0);
+
+			expect(mockVoyageAIClient.multimodalEmbed).toHaveBeenCalledWith(
+				expect.objectContaining({
+					inputType: 'document',
+					truncation: false,
+				}),
+			);
+		});
+	});
 });

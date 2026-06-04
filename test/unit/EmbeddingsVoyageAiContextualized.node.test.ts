@@ -20,6 +20,10 @@ jest.mock('voyageai', () => {
 	};
 });
 
+jest.mock('@utils/logWrapper', () => ({
+	logWrapper: jest.fn().mockImplementation((obj) => obj),
+}));
+
 // Import after mocking
 import { VoyageAIClient } from 'voyageai';
 const mockVoyageAIClient = VoyageAIClient as jest.MockedClass<typeof VoyageAIClient>;
@@ -333,6 +337,207 @@ describe('EmbeddingsVoyageAiContextualized', () => {
 			expect(mockContextualizedEmbed).toHaveBeenCalledWith(
 				expect.objectContaining({
 					model: 'voyage-context-3',
+				}),
+			);
+		});
+	});
+
+	describe('embedDocuments (cache)', () => {
+		let embeddings: any;
+
+		beforeEach(async () => {
+			const mockItems: INodeExecutionData[] = [
+				{ json: { documentId: 'doc1', text: 'chunk 1' } },
+				{ json: { documentId: 'doc1', text: 'chunk 2' } },
+			];
+
+			mockContext.getInputData.mockReturnValue(mockItems);
+
+			mockContextualizedEmbed.mockResolvedValue({
+				data: [
+					{
+						data: [
+							{ embedding: [0.1, 0.2, 0.3] },
+							{ embedding: [0.4, 0.5, 0.6] },
+						],
+					},
+				],
+			});
+
+			const result = await node.supplyData.call(mockContext, 0);
+			embeddings = result.response;
+		});
+
+		it('should return cached embeddings for known documents', async () => {
+			const result = await embeddings.embedDocuments(['chunk 1', 'chunk 2']);
+			expect(result).toEqual([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]);
+		});
+
+		it('should throw when document not found in cache', async () => {
+			await expect(
+				embeddings.embedDocuments(['nonexistent chunk']),
+			).rejects.toThrow('Document not found in pre-computed cache');
+		});
+
+		it('should throw when cache is not initialized', async () => {
+			(embeddings as any).embeddingsCache = null;
+			(embeddings as any).currentDocuments = null;
+
+			await expect(
+				embeddings.embedDocuments(['anything']),
+			).rejects.toThrow('Embeddings not pre-computed');
+		});
+	});
+
+	describe('embedQuery (live API call)', () => {
+		let embeddings: any;
+
+		beforeEach(async () => {
+			const mockItems: INodeExecutionData[] = [
+				{ json: { documentId: 'doc1', text: 'chunk 1' } },
+			];
+
+			mockContext.getInputData.mockReturnValue(mockItems);
+
+			mockContextualizedEmbed.mockResolvedValue({
+				data: [[{ embedding: [0.1, 0.2, 0.3] }]],
+			});
+
+			const result = await node.supplyData.call(mockContext, 0);
+			embeddings = result.response;
+		});
+
+		it('should call embed API for queries', async () => {
+			mockEmbed.mockResolvedValueOnce({
+				data: [{ embedding: [0.7, 0.8, 0.9] }],
+			});
+
+			const result = await embeddings.embedQuery('search query');
+
+			expect(result).toEqual([0.7, 0.8, 0.9]);
+			expect(mockEmbed).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: 'search query',
+					model: 'voyage-context-3',
+					inputType: 'query',
+				}),
+			);
+		});
+
+		it('should throw when embed API returns no data', async () => {
+			mockEmbed.mockResolvedValueOnce({ data: [] });
+
+			await expect(embeddings.embedQuery('empty')).rejects.toThrow(NodeOperationError);
+		});
+
+		it('should throw when embed API returns null data', async () => {
+			mockEmbed.mockResolvedValueOnce({ data: null });
+
+			await expect(embeddings.embedQuery('null')).rejects.toThrow(NodeOperationError);
+		});
+
+		it('should wrap API errors in NodeOperationError', async () => {
+			mockEmbed.mockRejectedValueOnce(new Error('connection timeout'));
+
+			await expect(embeddings.embedQuery('test')).rejects.toThrow(NodeOperationError);
+		});
+	});
+
+	describe('Options - outputDimension and outputDtype', () => {
+		it('should pass outputDimension and outputDtype to API', async () => {
+			mockContext.getNodeParameter.mockImplementation((parameterName: string) => {
+				if (parameterName === 'documentIdField') return 'documentId';
+				if (parameterName === 'textField') return 'text';
+				if (parameterName === 'options')
+					return { outputDimension: 512, outputDtype: 'int8' };
+				return undefined;
+			});
+
+			const mockItems: INodeExecutionData[] = [
+				{ json: { documentId: 'doc1', text: 'chunk 1' } },
+			];
+
+			mockContext.getInputData.mockReturnValue(mockItems);
+
+			mockContextualizedEmbed.mockResolvedValue({
+				data: [[{ embedding: [0.1, 0.2, 0.3] }]],
+			});
+
+			await node.supplyData.call(mockContext, 0);
+
+			expect(mockContextualizedEmbed).toHaveBeenCalledWith(
+				expect.objectContaining({
+					outputDimension: 512,
+					outputDtype: 'int8',
+				}),
+			);
+		});
+
+		it('should convert 0 outputDimension to undefined', async () => {
+			mockContext.getNodeParameter.mockImplementation((parameterName: string) => {
+				if (parameterName === 'documentIdField') return 'documentId';
+				if (parameterName === 'textField') return 'text';
+				if (parameterName === 'options') return { outputDimension: 0 };
+				return undefined;
+			});
+
+			const mockItems: INodeExecutionData[] = [
+				{ json: { documentId: 'doc1', text: 'chunk 1' } },
+			];
+
+			mockContext.getInputData.mockReturnValue(mockItems);
+
+			mockContextualizedEmbed.mockResolvedValue({
+				data: [[{ embedding: [0.1, 0.2, 0.3] }]],
+			});
+
+			await node.supplyData.call(mockContext, 0);
+
+			expect(mockContextualizedEmbed).toHaveBeenCalledWith(
+				expect.objectContaining({
+					outputDimension: undefined,
+				}),
+			);
+		});
+	});
+
+	describe('Validation - Edge Cases', () => {
+		it('should handle null document ID', async () => {
+			const mockItems: INodeExecutionData[] = [
+				{ json: { documentId: null, text: 'chunk 1' } },
+			];
+
+			mockContext.getInputData.mockReturnValue(mockItems);
+
+			await expect(node.supplyData.call(mockContext, 0)).rejects.toThrow(
+				'Missing document ID in field: documentId',
+			);
+		});
+
+		it('should convert numeric document IDs to strings', async () => {
+			const mockItems: INodeExecutionData[] = [
+				{ json: { documentId: 42, text: 'chunk 1' } },
+				{ json: { documentId: 42, text: 'chunk 2' } },
+			];
+
+			mockContext.getInputData.mockReturnValue(mockItems);
+
+			mockContextualizedEmbed.mockResolvedValue({
+				data: [
+					{
+						data: [
+							{ embedding: [0.1, 0.2] },
+							{ embedding: [0.3, 0.4] },
+						],
+					},
+				],
+			});
+
+			await node.supplyData.call(mockContext, 0);
+
+			expect(mockContextualizedEmbed).toHaveBeenCalledWith(
+				expect.objectContaining({
+					inputs: [['chunk 1', 'chunk 2']],
 				}),
 			);
 		});

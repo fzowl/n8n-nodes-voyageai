@@ -790,4 +790,250 @@ describe('EmbeddingsVoyageAi', () => {
 			expect(embedResult).toEqual([[1], [2], [3]]);
 		});
 	});
+
+	describe('embedQuery', () => {
+		let embeddings: any;
+
+		beforeEach(async () => {
+			const mockCredentials = { apiKey: 'test-api-key' };
+			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
+				.mockReturnValueOnce('voyage-4')
+				.mockReturnValueOnce(0)
+				.mockReturnValueOnce('float')
+				.mockReturnValueOnce({});
+			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
+
+			const result = await embeddingsVoyageAi.supplyData.call(mockSupplyDataFunctions, 0);
+			embeddings = (result.response as any).logWrapped;
+		});
+
+		it('should return embedding vector for a single query', async () => {
+			mockVoyageAIClient.embed.mockResolvedValueOnce({
+				data: [{ embedding: [0.1, 0.2, 0.3] }],
+			} as any);
+
+			const result = await embeddings.embedQuery('search query');
+
+			expect(result).toEqual([0.1, 0.2, 0.3]);
+			expect(mockVoyageAIClient.embed).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: 'search query',
+					model: 'voyage-4',
+					inputType: 'query',
+				}),
+			);
+		});
+
+		it('should return empty array when API returns no data', async () => {
+			mockVoyageAIClient.embed.mockResolvedValueOnce({
+				data: [],
+			} as any);
+
+			const result = await embeddings.embedQuery('empty query');
+			expect(result).toEqual([]);
+		});
+
+		it('should return empty array when data[0] has no embedding', async () => {
+			mockVoyageAIClient.embed.mockResolvedValueOnce({
+				data: [{ embedding: null }],
+			} as any);
+
+			const result = await embeddings.embedQuery('no embedding');
+			expect(result).toEqual([]);
+		});
+
+		it('should override inputType to query even when document is configured', async () => {
+			jest.clearAllMocks();
+			const mockCredentials = { apiKey: 'test-api-key' };
+			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
+				.mockReturnValueOnce('voyage-4')
+				.mockReturnValueOnce(0)
+				.mockReturnValueOnce('float')
+				.mockReturnValueOnce({ inputType: 'document' });
+			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
+
+			const result = await embeddingsVoyageAi.supplyData.call(mockSupplyDataFunctions, 0);
+			const instance = (result.response as any).logWrapped;
+
+			mockVoyageAIClient.embed.mockResolvedValueOnce({
+				data: [{ embedding: [1, 2] }],
+			} as any);
+
+			await instance.embedQuery('test');
+
+			expect(mockVoyageAIClient.embed).toHaveBeenCalledWith(
+				expect.objectContaining({
+					inputType: 'query',
+				}),
+			);
+		});
+	});
+
+	describe('buildEmbedParams', () => {
+		it('should include outputDtype when not float', async () => {
+			const mockCredentials = { apiKey: 'test-api-key' };
+			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
+				.mockReturnValueOnce('voyage-4')
+				.mockReturnValueOnce(0)
+				.mockReturnValueOnce('int8')
+				.mockReturnValueOnce({});
+			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
+
+			const result = await embeddingsVoyageAi.supplyData.call(mockSupplyDataFunctions, 0);
+			const instance = (result.response as any).logWrapped;
+
+			mockVoyageAIClient.embed.mockResolvedValueOnce({
+				data: [{ embedding: [1] }],
+			} as any);
+
+			await instance.embedQuery('test');
+
+			expect(mockVoyageAIClient.embed).toHaveBeenCalledWith(
+				expect.objectContaining({
+					outputDtype: 'int8',
+				}),
+			);
+		});
+
+		it('should not include outputDtype when float (default)', async () => {
+			const mockCredentials = { apiKey: 'test-api-key' };
+			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
+				.mockReturnValueOnce('voyage-4')
+				.mockReturnValueOnce(0)
+				.mockReturnValueOnce('float')
+				.mockReturnValueOnce({});
+			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
+
+			const result = await embeddingsVoyageAi.supplyData.call(mockSupplyDataFunctions, 0);
+			const instance = (result.response as any).logWrapped;
+
+			mockVoyageAIClient.embed.mockResolvedValueOnce({
+				data: [{ embedding: [1] }],
+			} as any);
+
+			await instance.embedQuery('test');
+
+			const callArgs = mockVoyageAIClient.embed.mock.calls[0][0];
+			expect(callArgs.outputDtype).toBeUndefined();
+		});
+
+		it('should include encodingFormat when base64', async () => {
+			const mockCredentials = { apiKey: 'test-api-key' };
+			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
+				.mockReturnValueOnce('voyage-4')
+				.mockReturnValueOnce(0)
+				.mockReturnValueOnce('float')
+				.mockReturnValueOnce({ encodingFormat: 'base64' });
+			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
+
+			const result = await embeddingsVoyageAi.supplyData.call(mockSupplyDataFunctions, 0);
+			const instance = (result.response as any).logWrapped;
+
+			mockVoyageAIClient.embed.mockResolvedValueOnce({
+				data: [{ embedding: [1] }],
+			} as any);
+
+			await instance.embedQuery('test');
+
+			expect(mockVoyageAIClient.embed).toHaveBeenCalledWith(
+				expect.objectContaining({
+					encodingFormat: 'base64',
+				}),
+			);
+		});
+
+		it('should not include encodingFormat when float (default)', async () => {
+			const mockCredentials = { apiKey: 'test-api-key' };
+			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
+				.mockReturnValueOnce('voyage-4')
+				.mockReturnValueOnce(0)
+				.mockReturnValueOnce('float')
+				.mockReturnValueOnce({ encodingFormat: 'float' });
+			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
+
+			const result = await embeddingsVoyageAi.supplyData.call(mockSupplyDataFunctions, 0);
+			const instance = (result.response as any).logWrapped;
+
+			mockVoyageAIClient.embed.mockResolvedValueOnce({
+				data: [{ embedding: [1] }],
+			} as any);
+
+			await instance.embedQuery('test');
+
+			const callArgs = mockVoyageAIClient.embed.mock.calls[0][0];
+			expect(callArgs.encodingFormat).toBeUndefined();
+		});
+
+		it('should include outputDimension when set', async () => {
+			const mockCredentials = { apiKey: 'test-api-key' };
+			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
+				.mockReturnValueOnce('voyage-4')
+				.mockReturnValueOnce(512)
+				.mockReturnValueOnce('float')
+				.mockReturnValueOnce({});
+			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
+
+			const result = await embeddingsVoyageAi.supplyData.call(mockSupplyDataFunctions, 0);
+			const instance = (result.response as any).logWrapped;
+
+			mockVoyageAIClient.embed.mockResolvedValueOnce({
+				data: [{ embedding: [1] }],
+			} as any);
+
+			await instance.embedQuery('test');
+
+			expect(mockVoyageAIClient.embed).toHaveBeenCalledWith(
+				expect.objectContaining({
+					outputDimension: 512,
+				}),
+			);
+		});
+
+		it('should include truncation when explicitly set to false', async () => {
+			const mockCredentials = { apiKey: 'test-api-key' };
+			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
+				.mockReturnValueOnce('voyage-4')
+				.mockReturnValueOnce(0)
+				.mockReturnValueOnce('float')
+				.mockReturnValueOnce({ truncation: false });
+			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
+
+			const result = await embeddingsVoyageAi.supplyData.call(mockSupplyDataFunctions, 0);
+			const instance = (result.response as any).logWrapped;
+
+			mockVoyageAIClient.embed.mockResolvedValueOnce({
+				data: [{ embedding: [1] }],
+			} as any);
+
+			await instance.embedQuery('test');
+
+			expect(mockVoyageAIClient.embed).toHaveBeenCalledWith(
+				expect.objectContaining({
+					truncation: false,
+				}),
+			);
+		});
+
+		it('should not include truncation when undefined', async () => {
+			const mockCredentials = { apiKey: 'test-api-key' };
+			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
+				.mockReturnValueOnce('voyage-4')
+				.mockReturnValueOnce(0)
+				.mockReturnValueOnce('float')
+				.mockReturnValueOnce({});
+			(mockSupplyDataFunctions.getCredentials as jest.Mock).mockResolvedValue(mockCredentials);
+
+			const result = await embeddingsVoyageAi.supplyData.call(mockSupplyDataFunctions, 0);
+			const instance = (result.response as any).logWrapped;
+
+			mockVoyageAIClient.embed.mockResolvedValueOnce({
+				data: [{ embedding: [1] }],
+			} as any);
+
+			await instance.embedQuery('test');
+
+			const callArgs = mockVoyageAIClient.embed.mock.calls[0][0];
+			expect(callArgs.truncation).toBeUndefined();
+		});
+	});
 });
