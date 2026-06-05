@@ -1,6 +1,6 @@
 {
 	"name": "n8n-nodes-voyageai",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "n8n community node for VoyageAI embeddings and reranking",
 	"keywords": [
 		"n8n-community-node-package"
@@ -42,16 +42,16 @@
 		]
 	},
 	"peerDependencies": {
+		"@langchain/core": ">=0.3.0",
 		"n8n-workflow": "*"
 	},
 	"dependencies": {
-		"@langchain/community": "^0.3.50",
-		"@langchain/core": "^0.3.68",
 		"proxy-from-env": "^1.1.0",
 		"undici": "^6.0.0",
 		"voyageai": "^0.2.1"
 	},
 	"devDependencies": {
+		"@langchain/core": "^0.3.68",
 		"@types/jest": "^29.5.14",
 		"@types/node": "^20.17.12",
 		"@typescript-eslint/eslint-plugin": "^7.0.0",
