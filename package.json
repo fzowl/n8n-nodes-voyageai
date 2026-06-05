@@ -11,7 +11,7 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/fodizoltan/n8n-nodes-voyageai.git"
+		"url": "https://github.com/fzowl/n8n-nodes-voyageai.git"
 	},
 	"main": "dist/nodes/EmbeddingsVoyageAi/EmbeddingsVoyageAi.node.js",
 	"files": [
