@@ -32,6 +32,11 @@ jobs:
       - name: Unit Tests
         run: npm run test:unit
 
+      - name: Integration Tests
+        run: npm run test:integration
+        env:
+          VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
+
       - name: Publish with provenance
         run: npm publish --provenance --access public
         env:
