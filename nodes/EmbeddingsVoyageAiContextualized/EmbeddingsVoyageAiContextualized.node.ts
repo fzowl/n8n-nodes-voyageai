@@ -12,16 +12,31 @@ import {
 
 import { logWrapper } from '../../utils/logWrapper';
 import { getConnectionHintNoticeField } from '../../utils/sharedFields';
+import {
+	CONTEXTUALIZED_TOKEN_LIMIT,
+	MAX_INPUTS_PER_REQUEST,
+	countTokensForTexts,
+	packBatches,
+} from '../../utils/tokenBudget';
+import { getVoyageErrorMessage } from '../../utils/voyageError';
+
+/** Target chunk size (in tokens) sent with every auto-chunked request. */
+const CHUNK_SIZE = 32_000;
+
+interface DocumentChunk {
+	text: string;
+	embedding: number[];
+}
 
 /**
- * Custom embeddings class that wraps VoyageAI contextualized embeddings API.
- * This class pre-processes input items by grouping chunks by document ID,
- * calls the VoyageAI SDK, and returns pre-computed embeddings.
+ * Custom embeddings class that wraps the Voyage AI by MongoDB contextualized embeddings API.
+ * Each input item is one whole document. The API chunks every document on the server
+ * (`enable_auto_chunking`), so the document text goes in as a flat list of strings.
+ * Embeddings are pre-computed once per node run and served from a cache.
  */
 class VoyageAIContextualizedEmbeddings extends Embeddings {
 	private client: VoyageAIClient;
 	private model: string;
-	private inputType?: 'query' | 'document';
 	private outputDimension?: number;
 	private outputDtype?: 'float' | 'int8' | 'uint8' | 'binary' | 'ubinary';
 	private executeFunctions: ISupplyDataFunctions;
@@ -29,15 +44,13 @@ class VoyageAIContextualizedEmbeddings extends Embeddings {
 	private textField: string;
 	private node: ReturnType<ISupplyDataFunctions['getNode']>;
 
-	// Cache for pre-computed embeddings
-	private embeddingsCache: number[][] | null = null;
-	private currentDocuments: string[] | null = null;
+	// Cache of pre-computed chunks, keyed by the full document text
+	private chunksByDocument: Map<string, DocumentChunk[]> | null = null;
 
 	constructor(fields: {
 		apiKey: string;
 		baseURL?: string;
 		model: string;
-		inputType?: 'query' | 'document';
 		outputDimension?: number;
 		outputDtype?: 'float' | 'int8' | 'uint8' | 'binary' | 'ubinary';
 		executeFunctions: ISupplyDataFunctions;
@@ -48,7 +61,6 @@ class VoyageAIContextualizedEmbeddings extends Embeddings {
 		super({});
 
 		this.model = fields.model;
-		this.inputType = fields.inputType;
 		this.outputDimension = fields.outputDimension;
 		this.outputDtype = fields.outputDtype;
 		this.executeFunctions = fields.executeFunctions;
@@ -64,11 +76,12 @@ class VoyageAIContextualizedEmbeddings extends Embeddings {
 
 	/**
 	 * Pre-compute embeddings for all input items.
-	 * This method groups chunks by document ID and calls the contextualized embeddings API.
+	 * Every item is one whole document; requests are split by the per-request token and
+	 * input limits and the API chunks each document.
 	 */
 	async precomputeEmbeddings(items: INodeExecutionData[]): Promise<void> {
-		const documentGroups = new Map<string, string[]>();
-		const documentOrder: string[] = [];
+		const documents: string[] = [];
+		const seenIds = new Set<string>();
 
 		for (const item of items) {
 			const docId = item.json[this.documentIdField];
@@ -83,116 +96,161 @@ class VoyageAIContextualizedEmbeddings extends Embeddings {
 			if (!text) {
 				throw new NodeOperationError(this.node, `Missing text in field: ${this.textField}`);
 			}
+			if (typeof text !== 'string') {
+				throw new NodeOperationError(
+					this.node,
+					`Field ${this.textField} must hold the whole document as a string; pre-chunked lists are not supported because the API chunks each document itself`,
+				);
+			}
 
 			const docIdStr = String(docId);
-
-			if (!documentGroups.has(docIdStr)) {
-				documentGroups.set(docIdStr, []);
+			if (seenIds.has(docIdStr)) {
+				throw new NodeOperationError(
+					this.node,
+					`Duplicate document ID ${docIdStr}: send each document once, as a single item with its whole text`,
+				);
 			}
-			documentGroups.get(docIdStr)!.push(String(text));
-			documentOrder.push(String(text));
-		}
-
-		const inputs = Array.from(documentGroups.values());
-
-		if (inputs.length > 1000) {
-			throw new NodeOperationError(this.node, 'Maximum 1,000 document groups exceeded');
-		}
-		const totalChunks = inputs.flat().length;
-		if (totalChunks > 16000) {
-			throw new NodeOperationError(this.node, 'Maximum 16,000 chunks exceeded');
+			seenIds.add(docIdStr);
+			documents.push(text);
 		}
 
 		try {
-			const response = await this.client.contextualizedEmbed({
-				inputs,
-				model: this.model,
-				inputType: this.inputType,
-				outputDimension: this.outputDimension,
-				outputDtype: this.outputDtype,
-			});
+			const tokenCounts = await countTokensForTexts(this.client, documents, this.model);
+			const batches = packBatches(tokenCounts, CONTEXTUALIZED_TOKEN_LIMIT, MAX_INPUTS_PER_REQUEST);
 
-			if (!response.data) {
-				throw new NodeOperationError(this.node, 'No embeddings data returned from VoyageAI API');
-			}
+			const chunksByDocument = new Map<string, DocumentChunk[]>();
+			let totalChunks = 0;
 
-			const allEmbeddings: number[][] = [];
-			for (const docGroup of response.data) {
-				// The API returns each document group as an object with a nested `data` array
-				const embeddings = (docGroup as any).data ?? (Array.isArray(docGroup) ? docGroup : []);
-				for (const embedding of embeddings) {
-					if (embedding.embedding) {
-						allEmbeddings.push(embedding.embedding);
+			for (const indices of batches) {
+				const batchDocuments = indices.map((index) => documents[index]);
+
+				const response = await this.client.contextualizedEmbed({
+					inputs: batchDocuments,
+					model: this.model,
+					inputType: 'document',
+					enableAutoChunking: true,
+					chunkSize: CHUNK_SIZE,
+					outputDimension: this.outputDimension,
+					outputDtype: this.outputDtype,
+				});
+
+				if (response.results.length !== batchDocuments.length) {
+					throw new NodeOperationError(
+						this.node,
+						`Expected ${batchDocuments.length} documents but received ${response.results.length}`,
+					);
+				}
+
+				for (const result of response.results) {
+					const chunkTexts = result.chunkTexts;
+					if (!chunkTexts || chunkTexts.length !== result.embeddings.length) {
+						throw new NodeOperationError(
+							this.node,
+							'The API did not return the text of every chunk for auto-chunked documents',
+						);
 					}
+					chunksByDocument.set(
+						batchDocuments[result.index],
+						result.embeddings.map((embedding, i) => ({ text: chunkTexts[i], embedding })),
+					);
+					totalChunks += result.embeddings.length;
 				}
 			}
 
-			this.embeddingsCache = allEmbeddings;
-			this.currentDocuments = documentOrder;
+			this.chunksByDocument = chunksByDocument;
 
 			this.executeFunctions.logger.debug(
-				`VoyageAI contextualized embeddings: processed ${totalChunks} chunks from ${inputs.length} documents`,
+				`Voyage AI by MongoDB contextualized embeddings: ${totalChunks} chunks from ${documents.length} documents in ${batches.length} requests`,
 			);
 		} catch (error) {
 			if (error instanceof NodeOperationError) {
 				throw error;
 			}
-			throw new NodeOperationError(this.node, `VoyageAI API error: ${(error as Error).message}`);
+			throw new NodeOperationError(
+				this.node,
+				`Voyage AI by MongoDB API error: ${getVoyageErrorMessage(error)}`,
+			);
 		}
 	}
 
-	async embedDocuments(documents: string[]): Promise<number[][]> {
-		if (!this.embeddingsCache || !this.currentDocuments) {
+	/**
+	 * Returns the chunks (text and embedding) the API produced for each document, in document order.
+	 */
+	async embedDocumentChunks(documents: string[]): Promise<DocumentChunk[]> {
+		if (!this.chunksByDocument) {
 			throw new NodeOperationError(
 				this.node,
 				'Embeddings not pre-computed. This should not happen in normal operation.',
 			);
 		}
 
-		const embeddings: number[][] = [];
+		const chunks: DocumentChunk[] = [];
 		for (const doc of documents) {
-			const index = this.currentDocuments.indexOf(doc);
-			if (index === -1) {
-				throw new NodeOperationError(this.node, `Document not found in pre-computed cache: ${doc}`);
+			const documentChunks = this.chunksByDocument.get(doc);
+			if (!documentChunks) {
+				throw new NodeOperationError(
+					this.node,
+					`Document not found in pre-computed cache: ${doc.slice(0, 80)}${doc.length > 80 ? '...' : ''}`,
+				);
 			}
-			embeddings.push(this.embeddingsCache[index]);
+			chunks.push(...documentChunks);
 		}
 
-		return embeddings;
+		return chunks;
+	}
+
+	/**
+	 * Returns one embedding per chunk. A document longer than one chunk yields several
+	 * embeddings, so the result can be longer than the input list.
+	 */
+	async embedDocuments(documents: string[]): Promise<number[][]> {
+		const chunks = await this.embedDocumentChunks(documents);
+		return chunks.map((chunk) => chunk.embedding);
 	}
 
 	async embedQuery(query: string): Promise<number[]> {
 		try {
-			const response = await this.client.embed({
-				input: query,
+			// Query mode does not use auto-chunking: one query as a single-chunk document
+			const response = await this.client.contextualizedEmbed({
+				inputs: [[query]],
 				model: this.model,
-				inputType: this.inputType || 'query',
+				inputType: 'query',
 				outputDimension: this.outputDimension,
 				outputDtype: this.outputDtype,
 			});
 
-			if (!response.data || response.data.length === 0 || !response.data[0].embedding) {
-				throw new NodeOperationError(this.node, 'No embedding data returned from VoyageAI API');
+			const embedding = response.results[0]?.embeddings[0];
+			if (!embedding || embedding.length === 0) {
+				throw new NodeOperationError(
+					this.node,
+					'No embedding data returned from Voyage AI by MongoDB API',
+				);
 			}
 
-			return response.data[0].embedding;
+			return embedding;
 		} catch (error) {
-			throw new NodeOperationError(this.node, `VoyageAI API error: ${(error as Error).message}`);
+			if (error instanceof NodeOperationError) {
+				throw error;
+			}
+			throw new NodeOperationError(
+				this.node,
+				`Voyage AI by MongoDB API error: ${getVoyageErrorMessage(error)}`,
+			);
 		}
 	}
 }
 
 export class EmbeddingsVoyageAiContextualized implements INodeType {
 	description: INodeTypeDescription = {
-		displayName: 'Embeddings VoyageAI Contextualized',
+		displayName: 'Embeddings Voyage AI by MongoDB Contextualized',
 		name: 'embeddingsVoyageAiContextualized',
 		icon: 'file:voyageAi.svg',
 		group: ['transform'],
 		version: 1,
 		description:
-			'Generate contextual embeddings for document chunks using VoyageAI, preserving inter-chunk relationships',
+			'Generate contextual embeddings for whole documents using Voyage AI by MongoDB. Each document is chunked by the API, and every chunk is embedded with the context of the whole document',
 		defaults: {
-			name: 'Embeddings VoyageAI Contextualized',
+			name: 'Embeddings Voyage AI by MongoDB Contextualized',
 		},
 		requestDefaults: {
 			ignoreHttpStatusErrors: true,
@@ -212,7 +270,7 @@ export class EmbeddingsVoyageAiContextualized implements INodeType {
 			resources: {
 				primaryDocumentation: [
 					{
-						url: 'https://docs.voyageai.com/docs/contextualized-embeddings',
+						url: 'https://docs.voyageai.com/docs/contextualized-chunk-embeddings',
 					},
 				],
 			},
@@ -226,10 +284,31 @@ export class EmbeddingsVoyageAiContextualized implements INodeType {
 			getConnectionHintNoticeField([NodeConnectionTypes.AiVectorStore]),
 			{
 				displayName:
-					'This node processes document chunks grouped by a document ID field to generate context-aware embeddings. Chunks with the same document ID will be processed together to preserve inter-chunk relationships.',
+					'Each input item is one whole document. The API splits every document into chunks and embeds each chunk with the context of the whole document; only a document longer than 32,000 tokens produces several chunks. Do not send pre-chunked text or split the documents with a text splitter.',
 				name: 'notice',
 				type: 'notice',
 				default: '',
+			},
+			{
+				displayName: 'Model',
+				name: 'modelName',
+				type: 'options',
+				description:
+					'The contextualized embeddings model. Vectors of different models are not compatible. <a href="https://docs.voyageai.com/docs/contextualized-chunk-embeddings" target="_blank">Learn more</a>.',
+				default: 'voyage-context-3',
+				options: [
+					{
+						name: 'Voyage-Context-4',
+						value: 'voyage-context-4',
+						description:
+							'Contextualized chunk embeddings optimized for general-purpose and multilingual retrieval quality',
+					},
+					{
+						name: 'Voyage-Context-3',
+						value: 'voyage-context-3',
+						description: 'Previous generation of contextualized chunk embeddings',
+					},
+				],
 			},
 			{
 				displayName: 'Document ID Field',
@@ -237,8 +316,7 @@ export class EmbeddingsVoyageAiContextualized implements INodeType {
 				type: 'string',
 				default: 'documentId',
 				required: true,
-				description:
-					'The field name containing the document identifier. Chunks with the same document ID will be processed together to preserve context.',
+				description: 'The field name containing the document identifier. Each ID must appear once.',
 				placeholder: 'documentId',
 			},
 			{
@@ -247,7 +325,7 @@ export class EmbeddingsVoyageAiContextualized implements INodeType {
 				type: 'string',
 				default: 'text',
 				required: true,
-				description: 'The field name containing the chunk text to embed',
+				description: 'The field name containing the whole document text to embed',
 				placeholder: 'text',
 			},
 			{
@@ -258,31 +336,6 @@ export class EmbeddingsVoyageAiContextualized implements INodeType {
 				type: 'collection',
 				default: {},
 				options: [
-					{
-						displayName: 'Input Type',
-						name: 'inputType',
-						type: 'options',
-						default: '',
-						description:
-							'Type of input for optimized embeddings. Embeddings with and without input_type are compatible.',
-						options: [
-							{
-								name: 'None',
-								value: '',
-								description: 'No optimization',
-							},
-							{
-								name: 'Query',
-								value: 'query',
-								description: 'Optimize for search queries',
-							},
-							{
-								name: 'Document',
-								value: 'document',
-								description: 'Optimize for documents to be searched',
-							},
-						],
-					},
 					{
 						displayName: 'Output Dimension',
 						name: 'outputDimension',
@@ -348,25 +401,20 @@ export class EmbeddingsVoyageAiContextualized implements INodeType {
 	};
 
 	async supplyData(this: ISupplyDataFunctions, itemIndex: number): Promise<SupplyData> {
-		this.logger.debug('Supply data for VoyageAI contextualized embeddings');
+		this.logger.debug('Supply data for Voyage AI by MongoDB contextualized embeddings');
 
 		const credentials = await this.getCredentials<{ apiKey: string; url?: string }>('voyageAiApi');
 
+		const modelName = this.getNodeParameter('modelName', itemIndex, 'voyage-context-3') as string;
 		const documentIdField = this.getNodeParameter('documentIdField', 0) as string;
 		const textField = this.getNodeParameter('textField', 0) as string;
 
 		const options = this.getNodeParameter('options', itemIndex, {}) as {
-			inputType?: string;
 			outputDimension?: number;
 			outputDtype?: 'float' | 'int8' | 'uint8' | 'binary' | 'ubinary';
 		};
 
 		const baseURL = credentials.url || 'https://api.voyageai.com/v1';
-
-		const inputType =
-			options.inputType && options.inputType !== ''
-				? (options.inputType as 'query' | 'document')
-				: undefined;
 
 		const outputDimension =
 			options.outputDimension && options.outputDimension !== 0
@@ -376,8 +424,7 @@ export class EmbeddingsVoyageAiContextualized implements INodeType {
 		const embeddings = new VoyageAIContextualizedEmbeddings({
 			apiKey: credentials.apiKey,
 			baseURL,
-			model: 'voyage-context-3',
-			inputType,
+			model: modelName,
 			outputDimension,
 			outputDtype: options.outputDtype,
 			executeFunctions: this,

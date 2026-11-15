@@ -57,7 +57,7 @@ describe('EmbeddingsVoyageAiMultimodal', () => {
 
 	describe('Node Configuration', () => {
 		it('should have correct metadata', () => {
-			expect(embeddingsNode.description.displayName).toBe('Embeddings VoyageAI Multimodal');
+			expect(embeddingsNode.description.displayName).toBe('Embeddings Voyage AI by MongoDB Multimodal');
 			expect(embeddingsNode.description.name).toBe('embeddingsVoyageAiMultimodal');
 			expect(embeddingsNode.description.credentials?.[0].name).toBe('voyageAiApi');
 			expect(embeddingsNode.description.version).toBe(1);

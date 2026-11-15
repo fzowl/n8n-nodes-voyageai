@@ -59,6 +59,20 @@ describeIf('RerankerVoyageAi Integration', () => {
 		expect(response.data!.length).toBe(2);
 	});
 
+	it.each(['rerank-3', 'rerank-3-lite'])('should respect topK with %s', async (model) => {
+		const response = await client.rerank({
+			query: 'cats',
+			documents: ['cats purr', 'stock market news', 'kittens and cats'],
+			model,
+			topK: 2,
+		});
+
+		expect(response.data!.length).toBe(2);
+		expect(response.data![0].relevanceScore!).toBeGreaterThanOrEqual(
+			response.data![1].relevanceScore!,
+		);
+	});
+
 	it('should work with rerank-2.5-lite model', async () => {
 		const response = await client.rerank({
 			query: 'test',

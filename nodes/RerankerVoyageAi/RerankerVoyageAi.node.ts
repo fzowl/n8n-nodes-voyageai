@@ -11,6 +11,7 @@ import { VoyageAIClient } from 'voyageai';
 
 import { logWrapper } from '../../utils/logWrapper';
 import { getProxyAgent } from '../../utils/httpProxyAgent';
+import { getVoyageErrorMessage } from '../../utils/voyageError';
 
 interface VoyageRerankerArgs {
 	apiKey: string;
@@ -22,7 +23,7 @@ interface VoyageRerankerArgs {
 }
 
 /**
- * Custom Document compressor that uses VoyageAI Rerank API.
+ * Custom Document compressor that uses the Voyage AI by MongoDB Rerank API.
  * Since LangChain doesn't provide a native VoyageAI reranker,
  * we implement it using the voyageai SDK directly.
  *
@@ -67,14 +68,19 @@ class VoyageReranker extends BaseDocumentCompressor {
 	): Promise<DocumentInterface[]> {
 		const documentTexts = documents.map((doc) => doc.pageContent);
 
-		const response = await this.client.rerank({
-			query,
-			documents: documentTexts,
-			model: this.model,
-			topK: this.topK,
-			returnDocuments: this.returnDocuments,
-			truncation: this.truncation,
-		});
+		let response;
+		try {
+			response = await this.client.rerank({
+				query,
+				documents: documentTexts,
+				model: this.model,
+				topK: this.topK,
+				returnDocuments: this.returnDocuments,
+				truncation: this.truncation,
+			});
+		} catch (error) {
+			throw new Error(`Voyage AI by MongoDB API error: ${getVoyageErrorMessage(error)}`);
+		}
 
 		const rerankedDocuments: DocumentInterface[] = [];
 
@@ -100,15 +106,15 @@ class VoyageReranker extends BaseDocumentCompressor {
 
 export class RerankerVoyageAi implements INodeType {
 	description: INodeTypeDescription = {
-		displayName: 'Reranker VoyageAI',
+		displayName: 'Reranker Voyage AI by MongoDB',
 		name: 'rerankerVoyageAi',
 		icon: 'file:voyageAi.svg',
 		group: ['transform'],
 		version: 1,
 		description:
-			"Use VoyageAI's Rerank models to reorder documents after retrieval from a vector store by relevance to the given query",
+			"Use Voyage AI by MongoDB's Rerank models to reorder documents after retrieval from a vector store by relevance to the given query",
 		defaults: {
-			name: 'Reranker VoyageAI',
+			name: 'Reranker Voyage AI by MongoDB',
 		},
 		requestDefaults: {
 			ignoreHttpStatusErrors: true,
@@ -146,9 +152,19 @@ export class RerankerVoyageAi implements INodeType {
 				default: 'rerank-2.5',
 				options: [
 					{
-						name: 'Rerank-2.5 (Latest, 32K Context)',
+						name: 'Rerank-3 (Highest Accuracy, 32K Context)',
+						value: 'rerank-3',
+						description: 'Highest accuracy, recommended for most applications',
+					},
+					{
+						name: 'Rerank-3-Lite (Fast, 32K Context)',
+						value: 'rerank-3-lite',
+						description: 'Fast and cost-effective, optimized for latency-sensitive applications',
+					},
+					{
+						name: 'Rerank-2.5 (32K Context)',
 						value: 'rerank-2.5',
-						description: 'Latest model, generalist with instruction-following optimization',
+						description: 'Generalist model with instruction-following optimization',
 					},
 					{
 						name: 'Rerank-2.5-Lite (32K Context)',
@@ -200,7 +216,7 @@ export class RerankerVoyageAi implements INodeType {
 	};
 
 	async supplyData(this: ISupplyDataFunctions, itemIndex: number): Promise<SupplyData> {
-		this.logger.debug('Supply data for reranker VoyageAI');
+		this.logger.debug('Supply data for reranker Voyage AI by MongoDB');
 
 		const modelName = this.getNodeParameter('modelName', itemIndex, 'rerank-2.5') as string;
 		const topK = this.getNodeParameter('topK', itemIndex, 3) as number;

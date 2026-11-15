@@ -11,10 +11,16 @@ import {
 import { logWrapper } from '../../utils/logWrapper';
 import { getConnectionHintNoticeField } from '../../utils/sharedFields';
 import { getProxyAgent } from '../../utils/httpProxyAgent';
-import { getTokenBudget, countTokensForTexts } from '../../utils/tokenBudget';
+import {
+	getTokenBudget,
+	countTokensForTexts,
+	packBatches,
+	MAX_INPUTS_PER_REQUEST,
+} from '../../utils/tokenBudget';
+import { getVoyageErrorMessage } from '../../utils/voyageError';
 
 /**
- * Custom embeddings class that wraps the VoyageAI SDK directly.
+ * Custom embeddings class that wraps the Voyage AI by MongoDB SDK directly.
  * Supports all voyage-4 and legacy models with full parameter control.
  */
 class VoyageAIEmbeddings extends Embeddings {
@@ -41,7 +47,7 @@ class VoyageAIEmbeddings extends Embeddings {
 		super({});
 
 		this.model = fields.model;
-		this.batchSize = fields.batchSize ?? 128;
+		this.batchSize = fields.batchSize ?? MAX_INPUTS_PER_REQUEST;
 		this.inputType = fields.inputType;
 		this.outputDimension = fields.outputDimension;
 		this.outputDtype = fields.outputDtype;
@@ -91,6 +97,14 @@ class VoyageAIEmbeddings extends Embeddings {
 		return params;
 	}
 
+	private async embed(input: string | string[], inputType?: 'query' | 'document') {
+		try {
+			return await this.client.embed(this.buildEmbedParams(input, inputType));
+		} catch (error) {
+			throw new Error(`Voyage AI by MongoDB API error: ${getVoyageErrorMessage(error)}`);
+		}
+	}
+
 	async embedDocuments(texts: string[]): Promise<number[][]> {
 		const allEmbeddings: number[][] = [];
 		const tokenBudget = getTokenBudget(this.model);
@@ -98,29 +112,14 @@ class VoyageAIEmbeddings extends Embeddings {
 		// Replace empty strings with a space to avoid API errors
 		const sanitized = texts.map((t) => (t === '' ? ' ' : t));
 
-		// Get exact token counts upfront (falls back to heuristic on error)
+		// Exact token counts from the SDK tokenizer
 		const tokenCounts = await countTokensForTexts(this.client, sanitized, this.model);
 
-		// Greedy packing: fill batch until batchSize count OR token budget reached
-		let i = 0;
-		while (i < sanitized.length) {
-			const batch: string[] = [];
-			let batchTokens = 0;
-
-			while (i < sanitized.length && batch.length < this.batchSize) {
-				const textTokens = tokenCounts[i];
-
-				// Always include at least one text per batch to prevent infinite loop
-				if (batch.length > 0 && batchTokens + textTokens > tokenBudget) {
-					break;
-				}
-
-				batch.push(sanitized[i]);
-				batchTokens += textTokens;
-				i++;
-			}
-
-			const response = await this.client.embed(this.buildEmbedParams(batch));
+		// Greedy packing: fill a batch until the batch size, the 1000 input limit
+		// or the model's request token budget is reached. Order is preserved.
+		const maxItems = Math.min(this.batchSize, MAX_INPUTS_PER_REQUEST);
+		for (const indices of packBatches(tokenCounts, tokenBudget, maxItems)) {
+			const response = await this.embed(indices.map((index) => sanitized[index]));
 
 			if (response.data) {
 				for (const item of response.data) {
@@ -135,7 +134,7 @@ class VoyageAIEmbeddings extends Embeddings {
 	}
 
 	async embedQuery(text: string): Promise<number[]> {
-		const response = await this.client.embed(this.buildEmbedParams(text, 'query'));
+		const response = await this.embed(text, 'query');
 
 		if (response.data && response.data.length > 0 && response.data[0].embedding) {
 			return response.data[0].embedding;
@@ -150,6 +149,7 @@ const MODELS_SUPPORTING_DIMENSIONS = [
 	'voyage-4',
 	'voyage-4-lite',
 	'voyage-4-nano',
+	'voyage-code-4',
 	'voyage-3.5',
 	'voyage-3.5-lite',
 	'voyage-3-large',
@@ -158,14 +158,14 @@ const MODELS_SUPPORTING_DIMENSIONS = [
 
 export class EmbeddingsVoyageAi implements INodeType {
 	description: INodeTypeDescription = {
-		displayName: 'Embeddings VoyageAI',
+		displayName: 'Embeddings Voyage AI by MongoDB',
 		name: 'embeddingsVoyageAi',
 		icon: 'file:voyageAi.svg',
 		group: ['transform'],
 		version: 1,
-		description: "Use VoyageAI's Embeddings models",
+		description: "Use Voyage AI by MongoDB's Embeddings models",
 		defaults: {
-			name: 'Embeddings VoyageAI',
+			name: 'Embeddings Voyage AI by MongoDB',
 		},
 		requestDefaults: {
 			ignoreHttpStatusErrors: true,
@@ -233,6 +233,11 @@ export class EmbeddingsVoyageAi implements INodeType {
 						description: 'Open-weight model, smallest and fastest',
 					},
 					{
+						name: 'Voyage-Code-4 (Code)',
+						value: 'voyage-code-4',
+						description: 'Optimized for code retrieval and coding agent use cases',
+					},
+					{
 						name: 'Voyage-Code-3 (Code)',
 						value: 'voyage-code-3',
 						description: 'Optimized for code retrieval',
@@ -275,7 +280,7 @@ export class EmbeddingsVoyageAi implements INodeType {
 				type: 'options',
 				default: 0,
 				description:
-					'The number of dimensions for the output embeddings. Only supported by voyage-4*, voyage-3.5*, voyage-3-large, and voyage-code-3.',
+					'The number of dimensions for the output embeddings. Only supported by voyage-4*, voyage-code-4, voyage-3.5*, voyage-3-large, and voyage-code-3.',
 				displayOptions: {
 					show: {
 						modelName: MODELS_SUPPORTING_DIMENSIONS,
@@ -350,9 +355,10 @@ export class EmbeddingsVoyageAi implements INodeType {
 						displayName: 'Batch Size',
 						name: 'batchSize',
 						type: 'number',
-						default: 128,
-						typeOptions: { maxValue: 1000 },
-						description: 'Maximum number of documents to send in each request (max 1000)',
+						default: 1000,
+						typeOptions: { minValue: 1, maxValue: 1000 },
+						description:
+							"Maximum number of documents to send in each request (max 1000). Requests are also split by the model's token limit, counted with the SDK tokenizer.",
 					},
 					{
 						displayName: 'Input Type',
@@ -412,7 +418,7 @@ export class EmbeddingsVoyageAi implements INodeType {
 	};
 
 	async supplyData(this: ISupplyDataFunctions, itemIndex: number): Promise<SupplyData> {
-		this.logger.debug('Supply data for embeddings VoyageAI');
+		this.logger.debug('Supply data for embeddings Voyage AI by MongoDB');
 
 		const modelName = this.getNodeParameter('modelName', itemIndex, 'voyage-4') as string;
 		const credentials = await this.getCredentials<{ apiKey: string; url?: string }>('voyageAiApi');

@@ -66,7 +66,7 @@ describe('EmbeddingsVoyageAi', () => {
 
 	describe('Node Configuration', () => {
 		it('should have correct metadata', () => {
-			expect(embeddingsVoyageAi.description.displayName).toBe('Embeddings VoyageAI');
+			expect(embeddingsVoyageAi.description.displayName).toBe('Embeddings Voyage AI by MongoDB');
 			expect(embeddingsVoyageAi.description.name).toBe('embeddingsVoyageAi');
 			expect(embeddingsVoyageAi.description.credentials?.[0].name).toBe('voyageAiApi');
 		});
@@ -91,6 +91,19 @@ describe('EmbeddingsVoyageAi', () => {
 			expect(modelValues).toContain('voyage-4');
 			expect(modelValues).toContain('voyage-4-lite');
 			expect(modelValues).toContain('voyage-4-nano');
+		});
+
+		it('should include voyage-code-4 with flexible dimensions', () => {
+			const modelParam = embeddingsVoyageAi.description.properties.find(
+				(p) => p.name === 'modelName',
+			);
+			const modelValues = ((modelParam as any)?.options || []).map((o: any) => o.value);
+			const dimParam = embeddingsVoyageAi.description.properties.find(
+				(p) => p.name === 'outputDimension',
+			);
+
+			expect(modelValues).toContain('voyage-code-4');
+			expect(dimParam?.displayOptions?.show?.modelName).toContain('voyage-code-4');
 		});
 
 		it('should include legacy models', () => {
@@ -489,7 +502,7 @@ describe('EmbeddingsVoyageAi', () => {
 			await embeddingsVoyageAi.supplyData.call(mockSupplyDataFunctions, 0);
 
 			expect(mockSupplyDataFunctions.logger.debug).toHaveBeenCalledWith(
-				'Supply data for embeddings VoyageAI',
+				'Supply data for embeddings Voyage AI by MongoDB',
 			);
 		});
 
@@ -699,6 +712,38 @@ describe('EmbeddingsVoyageAi', () => {
 
 			expect(mockVoyageAIClient.embed).not.toHaveBeenCalled();
 			expect(result).toEqual([]);
+		});
+
+		it('should surface the Voyage error detail when embedding fails', async () => {
+			mockVoyageAIClient.embed.mockRejectedValueOnce(
+				Object.assign(new Error('Status code: 400'), {
+					statusCode: 400,
+					body: { detail: 'Request exceeds the token limit.' },
+				}),
+			);
+
+			await expect(embeddings.embedDocuments(['a'])).rejects.toThrow(
+				'Voyage AI by MongoDB API error: Request exceeds the token limit. (status 400)',
+			);
+		});
+
+		it('should not cap requests at a fixed batch size unless the option sets one', async () => {
+			(mockSupplyDataFunctions.getNodeParameter as jest.Mock)
+				.mockReturnValueOnce('voyage-4')
+				.mockReturnValueOnce(0)
+				.mockReturnValueOnce('float')
+				.mockReturnValueOnce({});
+			const result = await embeddingsVoyageAi.supplyData.call(mockSupplyDataFunctions, 0);
+			const unbounded = (result.response as any).logWrapped;
+			const texts = Array.from({ length: 300 }, (_, i) => `text ${i}`);
+			mockVoyageAIClient.embed.mockResolvedValueOnce({
+				data: texts.map((_, i) => ({ embedding: [i] })),
+			} as any);
+
+			const vectors = await unbounded.embedDocuments(texts);
+
+			expect(mockVoyageAIClient.embed).toHaveBeenCalledTimes(1);
+			expect(vectors).toHaveLength(300);
 		});
 
 		it('should call tokenize only once for all texts', async () => {

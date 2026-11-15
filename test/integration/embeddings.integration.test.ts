@@ -75,6 +75,24 @@ describeIf('EmbeddingsVoyageAi Integration', () => {
 		expect(response.data![0].embedding!.length).toBe(1024);
 	});
 
+	it.each(['voyage-4-large', 'voyage-4', 'voyage-4-lite', 'voyage-code-4'])(
+		'should return a 1024-dimension vector natively and 256 with outputDimension for %s',
+		async (model) => {
+			const native = await client.embed({ input: 'Hello world', model });
+			expect(native.data![0].embedding!.length).toBe(1024);
+
+			const small = await client.embed({ input: 'Hello world', model, outputDimension: 256 });
+			expect(small.data![0].embedding!.length).toBe(256);
+		},
+	);
+
+	it('should return the Voyage detail for an unknown model', async () => {
+		await expect(client.embed({ input: 'test', model: 'voyage-nope' })).rejects.toMatchObject({
+			statusCode: 400,
+			body: { detail: expect.stringContaining('not supported') },
+		});
+	});
+
 	it('should return meaningful error for invalid API key', async () => {
 		const badClient = new VoyageAIClient({ apiKey: 'invalid-key' });
 

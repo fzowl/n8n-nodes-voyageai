@@ -13,47 +13,85 @@ describeIf('EmbeddingsVoyageAiContextualized Integration', () => {
 		client = new VoyageAIClient({ apiKey: VOYAGE_API_KEY! });
 	});
 
-	it('should embed single document with multiple chunks', async () => {
-		const response = await client.contextualizedEmbed({
-			inputs: [['chunk one of document', 'chunk two of document', 'chunk three of document']],
-			model: 'voyage-context-3',
+	describe.each(['voyage-context-3', 'voyage-context-4'])('%s', (model) => {
+		it('should auto-chunk whole documents and return the chunk texts', async () => {
+			const documents = ['First document. It has two sentences.', 'Second document about cats.'];
+
+			const response = await client.contextualizedEmbed({
+				inputs: documents,
+				model,
+				inputType: 'document',
+				enableAutoChunking: true,
+				chunkSize: 32_000,
+			});
+
+			expect(response.results).toHaveLength(2);
+			response.results.forEach((result, i) => {
+				expect(result.index).toBe(i);
+				expect(result.embeddings.length).toBeGreaterThan(0);
+				expect(result.embeddings[0]).toHaveLength(1024);
+				expect(result.chunkTexts).toHaveLength(result.embeddings.length);
+			});
 		});
 
-		expect(response.data).toBeDefined();
-		expect(response.data!.length).toBe(1);
-		// Each document group is an object with a nested `data` array of embeddings
-		const docGroup = response.data![0] as any;
-		if (docGroup.data) {
-			expect(docGroup.data.length).toBe(3);
-			expect(docGroup.data[0]).toHaveProperty('embedding');
-		} else if (Array.isArray(docGroup)) {
-			expect(docGroup.length).toBe(3);
-		}
+		it('should embed a query as a single-chunk document, without auto-chunking', async () => {
+			const response = await client.contextualizedEmbed({
+				inputs: [['a search query']],
+				model,
+				inputType: 'query',
+			});
+
+			expect(response.results).toHaveLength(1);
+			expect(response.results[0].embeddings).toHaveLength(1);
+			expect(response.results[0].embeddings[0]).toHaveLength(1024);
+		});
+
+		it('should respect outputDimension: 256', async () => {
+			const response = await client.contextualizedEmbed({
+				inputs: [['a search query']],
+				model,
+				inputType: 'query',
+				outputDimension: 256,
+			});
+
+			expect(response.results[0].embeddings[0]).toHaveLength(256);
+		});
 	});
 
-	it('should embed multiple documents with multiple chunks each', async () => {
-		const response = await client.contextualizedEmbed({
-			inputs: [
-				['doc1 chunk1', 'doc1 chunk2'],
-				['doc2 chunk1', 'doc2 chunk2', 'doc2 chunk3'],
-			],
-			model: 'voyage-context-3',
-		});
-
-		expect(response.data).toBeDefined();
-		expect(response.data!.length).toBe(2);
+	it('should reject a pre-chunked document with auto-chunking enabled', async () => {
+		await expect(
+			client.contextualizedEmbed({
+				inputs: [['chunk one', 'chunk two']],
+				model: 'voyage-context-4',
+				inputType: 'document',
+				enableAutoChunking: true,
+				chunkSize: 32_000,
+			}),
+		).rejects.toThrow('auto-chunking expects one string per document');
 	});
 
-	it('should embed query using standard embed API with compatible model', async () => {
-		// voyage-context-3 is only for contextualizedEmbed, use voyage-3.5 for standard embed
-		const response = await client.embed({
-			input: 'a search query',
-			model: 'voyage-3.5',
-			inputType: 'query',
-		});
+	it('should reject auto-chunking for queries', async () => {
+		await expect(
+			client.contextualizedEmbed({
+				inputs: ['a search query'],
+				model: 'voyage-context-4',
+				inputType: 'query',
+				enableAutoChunking: true,
+				chunkSize: 32_000,
+			}),
+		).rejects.toThrow("requires inputType: 'document'");
+	});
 
-		expect(response.data).toBeDefined();
-		expect(response.data!.length).toBe(1);
-		expect(response.data![0].embedding).toBeDefined();
+	it('should return the Voyage detail for an unknown model', async () => {
+		await expect(
+			client.contextualizedEmbed({
+				inputs: [['x']],
+				model: 'voyage-context-nope',
+				inputType: 'query',
+			}),
+		).rejects.toMatchObject({
+			statusCode: 400,
+			body: { detail: expect.stringContaining('not supported') },
+		});
 	});
 });

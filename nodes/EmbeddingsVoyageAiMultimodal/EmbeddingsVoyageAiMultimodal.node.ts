@@ -13,6 +13,7 @@ import {
 
 import { logWrapper } from '../../utils/logWrapper';
 import { getConnectionHintNoticeField } from '../../utils/sharedFields';
+import { getVoyageErrorMessage } from '../../utils/voyageError';
 
 /**
  * Converts binary image data to a data URI
@@ -32,7 +33,7 @@ function dataUriFromImageData(
 }
 
 /**
- * Custom embeddings class that wraps VoyageAI multimodal embeddings API.
+ * Custom embeddings class that wraps the Voyage AI by MongoDB multimodal embeddings API.
  * This class supports text, image URLs, and binary images.
  */
 class VoyageAIMultimodalEmbeddings extends Embeddings {
@@ -196,7 +197,10 @@ class VoyageAIMultimodalEmbeddings extends Embeddings {
 			});
 
 			if (!response.data || response.data.length === 0) {
-				throw new NodeOperationError(this.node, 'No embeddings data returned from VoyageAI API');
+				throw new NodeOperationError(
+					this.node,
+					'No embeddings data returned from Voyage AI by MongoDB API',
+				);
 			}
 
 			const allEmbeddings: number[][] = [];
@@ -217,13 +221,16 @@ class VoyageAIMultimodalEmbeddings extends Embeddings {
 			this.currentDocuments = documentOrder;
 
 			this.executeFunctions.logger.debug(
-				`VoyageAI multimodal embeddings: processed ${inputs.length} inputs`,
+				`Voyage AI by MongoDB multimodal embeddings: processed ${inputs.length} inputs`,
 			);
 		} catch (error) {
 			if (error instanceof NodeOperationError) {
 				throw error;
 			}
-			throw new NodeOperationError(this.node, `VoyageAI API error: ${(error as Error).message}`);
+			throw new NodeOperationError(
+				this.node,
+				`Voyage AI by MongoDB API error: ${getVoyageErrorMessage(error)}`,
+			);
 		}
 	}
 
@@ -274,27 +281,33 @@ class VoyageAIMultimodalEmbeddings extends Embeddings {
 			});
 
 			if (!response.data || response.data.length === 0 || !response.data[0].embedding) {
-				throw new NodeOperationError(this.node, 'No embedding data returned from VoyageAI API');
+				throw new NodeOperationError(
+					this.node,
+					'No embedding data returned from Voyage AI by MongoDB API',
+				);
 			}
 
 			return response.data[0].embedding;
 		} catch (error) {
-			throw new NodeOperationError(this.node, `VoyageAI API error: ${(error as Error).message}`);
+			throw new NodeOperationError(
+				this.node,
+				`Voyage AI by MongoDB API error: ${getVoyageErrorMessage(error)}`,
+			);
 		}
 	}
 }
 
 export class EmbeddingsVoyageAiMultimodal implements INodeType {
 	description: INodeTypeDescription = {
-		displayName: 'Embeddings VoyageAI Multimodal',
+		displayName: 'Embeddings Voyage AI by MongoDB Multimodal',
 		name: 'embeddingsVoyageAiMultimodal',
 		icon: 'file:voyageAi.svg',
 		group: ['transform'],
 		version: 1,
 		description:
-			'Generate multimodal embeddings from text and images using VoyageAI multimodal models',
+			'Generate multimodal embeddings from text and images using Voyage AI by MongoDB multimodal models',
 		defaults: {
-			name: 'Embeddings VoyageAI Multimodal',
+			name: 'Embeddings Voyage AI by MongoDB Multimodal',
 		},
 		requestDefaults: {
 			ignoreHttpStatusErrors: true,
@@ -328,7 +341,7 @@ export class EmbeddingsVoyageAiMultimodal implements INodeType {
 			getConnectionHintNoticeField([NodeConnectionTypes.AiVectorStore]),
 			{
 				displayName:
-					'This node generates embeddings from text, images, or both using VoyageAI multimodal models. Images can be provided via URL or as binary data.',
+					'This node generates embeddings from text, images, or both using Voyage AI by MongoDB multimodal models. Images can be provided via URL or as binary data.',
 				name: 'notice',
 				type: 'notice',
 				default: '',
@@ -344,8 +357,7 @@ export class EmbeddingsVoyageAiMultimodal implements INodeType {
 					{
 						name: 'Voyage-Multimodal-3.5 (Latest)',
 						value: 'voyage-multimodal-3.5',
-						description:
-							'Latest multimodal model, supports text, images, and video screenshots',
+						description: 'Latest multimodal model, supports text, images, and video screenshots',
 					},
 					{
 						name: 'Voyage-Multimodal-3',
@@ -479,7 +491,7 @@ export class EmbeddingsVoyageAiMultimodal implements INodeType {
 	};
 
 	async supplyData(this: ISupplyDataFunctions, itemIndex: number): Promise<SupplyData> {
-		this.logger.debug('Supply data for VoyageAI multimodal embeddings');
+		this.logger.debug('Supply data for Voyage AI by MongoDB multimodal embeddings');
 
 		const modelName = this.getNodeParameter(
 			'modelName',

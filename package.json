@@ -1,7 +1,7 @@
 {
 	"name": "n8n-nodes-voyageai",
-	"version": "0.1.3",
-	"description": "n8n community node for VoyageAI embeddings and reranking",
+	"version": "0.2.0",
+	"description": "n8n community node for Voyage AI by MongoDB embeddings and reranking",
 	"keywords": [
 		"n8n-community-node-package"
 	],
@@ -47,9 +47,10 @@
 		"n8n-workflow": "*"
 	},
 	"dependencies": {
+		"@huggingface/transformers": "^3.8.1",
 		"proxy-from-env": "^1.1.0",
 		"undici": "^6.0.0",
-		"voyageai": "^0.2.1"
+		"voyageai": "^0.4.0"
 	},
 	"devDependencies": {
 		"@langchain/core": "^0.3.68",

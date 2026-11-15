@@ -8,7 +8,7 @@ import type {
 export class VoyageAiApi implements ICredentialType {
 	name = 'voyageAiApi';
 
-	displayName = 'VoyageAI API';
+	displayName = 'Voyage AI by MongoDB API';
 
 	documentationUrl = 'https://docs.voyageai.com/docs/api-key-and-installation';
 

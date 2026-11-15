@@ -60,7 +60,7 @@ describe('RerankerVoyageAi', () => {
 
 	describe('Node Configuration', () => {
 		it('should have correct metadata', () => {
-			expect(rerankerVoyageAi.description.displayName).toBe('Reranker VoyageAI');
+			expect(rerankerVoyageAi.description.displayName).toBe('Reranker Voyage AI by MongoDB');
 			expect(rerankerVoyageAi.description.name).toBe('rerankerVoyageAi');
 			expect(rerankerVoyageAi.description.credentials?.[0].name).toBe('voyageAiApi');
 		});
@@ -72,6 +72,24 @@ describe('RerankerVoyageAi', () => {
 			expect(modelParam).toBeDefined();
 			expect(modelParam?.type).toBe('options');
 			expect(modelParam?.default).toBe('rerank-2.5');
+		});
+
+		it('should offer rerank-3 and rerank-3-lite next to the older models', () => {
+			const modelParam = rerankerVoyageAi.description.properties.find(
+				(p) => p.name === 'modelName',
+			);
+			const values = (modelParam?.options as Array<{ value: string }>).map((o) => o.value);
+
+			expect(values).toEqual(
+				expect.arrayContaining([
+					'rerank-3',
+					'rerank-3-lite',
+					'rerank-2.5',
+					'rerank-2.5-lite',
+					'rerank-2',
+					'rerank-2-lite',
+				]),
+			);
 		});
 
 		it('should have topK parameter', () => {
@@ -210,7 +228,7 @@ describe('RerankerVoyageAi', () => {
 			await rerankerVoyageAi.supplyData.call(mockSupplyDataFunctions, 0);
 
 			expect(mockSupplyDataFunctions.logger.debug).toHaveBeenCalledWith(
-				'Supply data for reranker VoyageAI',
+				'Supply data for reranker Voyage AI by MongoDB',
 			);
 		});
 
@@ -241,6 +259,21 @@ describe('RerankerVoyageAi', () => {
 
 			const result = await rerankerVoyageAi.supplyData.call(mockSupplyDataFunctions, 0);
 			reranker = (result.response as any).logWrapped;
+		});
+
+		it('should surface the Voyage error detail when reranking fails', async () => {
+			mockVoyageClient.rerank = jest.fn().mockRejectedValue(
+				Object.assign(new Error('Status code: 400'), {
+					statusCode: 400,
+					body: { detail: 'Model rerank-9 is not supported.' },
+				}),
+			);
+
+			await expect(
+				reranker.compressDocuments([{ pageContent: 'a', metadata: {} }], 'q'),
+			).rejects.toThrow(
+				'Voyage AI by MongoDB API error: Model rerank-9 is not supported. (status 400)',
+			);
 		});
 
 		it('should rerank documents by relevance score', async () => {
